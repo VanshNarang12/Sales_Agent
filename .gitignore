@@ -1,0 +1,39 @@
+# Binaries
+/bin/
+*.exe
+*.test
+*.out
+
+# Go test / coverage output
+*.cover
+coverage.out
+coverage.html
+profile.out
+
+# Env / secrets — never commit
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Logs
+*.log
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# Go
+/vendor/
+
+# Client (Electron) build artifacts
+/client/node_modules/
+/client/dist/
+/client/out/
+/client/.vite/
+
+# Claude Code — keep shared skills, ignore local-only config
+.claude/settings.local.json

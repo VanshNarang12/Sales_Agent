@@ -1,0 +1,57 @@
+# Local development stores for the Sales Copilot backend (Stage 0 foundations).
+# Mirrors the cloud topology (Postgres+pgvector, Redis, S3, event bus) so code is
+# portable. See techdocs/project_foundations_techdoc.md §3/§6.
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: copilot
+      POSTGRES_PASSWORD: copilot
+      POSTGRES_DB: copilot
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./migrations:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U copilot"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+
+  # S3-compatible object store for local dev.
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: copilot
+      MINIO_ROOT_PASSWORD: copilot123
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - miniodata:/data
+
+  # Event bus.
+  nats:
+    image: nats:2-alpine
+    command: ["-js"] # enable JetStream
+    ports:
+      - "4222:4222"
+
+  # OTel collector endpoint for local traces (optional; gateway exports here).
+  otel-collector:
+    image: otel/opentelemetry-collector:latest
+    ports:
+      - "4317:4317" # OTLP gRPC
+      - "4318:4318" # OTLP HTTP
+
+volumes:
+  pgdata:
+  miniodata:
