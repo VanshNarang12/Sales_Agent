@@ -11,6 +11,13 @@ interface CopilotBridge {
     version: string;
     os: string;
   };
+  // Prospect (system-audio) capture, bridged from the main process. Optional:
+  // absent/unsupported builds simply run rep-only.
+  prospect?: {
+    start(): Promise<{ supported: boolean; sampleRate: number }>;
+    stop(): Promise<void>;
+    onAudio(cb: (samples: Float32Array) => void): void;
+  };
 }
 interface Window {
   copilot: CopilotBridge;
@@ -30,7 +37,8 @@ const reconnectsEl = document.getElementById("reconnects") as HTMLSpanElement;
 const TARGET_RATE = 16000; // Hz — what STT providers expect
 const FRAME_SAMPLES = cfg.frameSize; // 2048 samples = 128 ms @ 16 kHz
 const MSG_TYPE_AUDIO = 0x01;
-const CH_REP = 0x00; // channel byte: 0 = rep mic (prospect loopback = 0x01 later)
+const CH_REP = 0x00; // channel byte: 0 = rep mic
+const CH_PROSPECT = 0x01; // channel byte: 1 = prospect (system/loopback audio)
 const MAX_BUFFERED = 256 * 1024; // backpressure threshold (§6.1)
 const RECONNECT_DELAYS_MS = [500, 1000, 2000, 4000, 8000]; // backoff ladder (§6)
 const MAX_RECONNECT_ATTEMPTS = 8;
@@ -44,9 +52,7 @@ let micStream: MediaStream | null = null;
 let audioCtx: AudioContext | null = null;
 let sourceNode: MediaStreamAudioSourceNode | null = null;
 let processorNode: ScriptProcessorNode | null = null;
-let resampleRatio = 3; // recomputed from the real hardware rate on connect (§12)
 
-let seq = 0; // per-channel frame counter; survives reconnects, resets on disconnect
 let framesSent = 0;
 let framesDropped = 0;
 let reconnects = 0;
@@ -54,11 +60,33 @@ let reconnectAttempt = 0;
 let reconnectTimer: number | null = null;
 let userStopped = false;
 
-// Resampler + framer state (carried across audio callbacks).
-let lp = 0; // low-pass filter memory
-let pickAt = 0; // fractional index of the next sample to keep
-const frameBuf = new Int16Array(FRAME_SAMPLES); // reused; encode copies it out
-let frameFill = 0;
+// Per-stream resample + frame state. One source = one StreamPipe, so the rep
+// (mic) and the prospect (system audio) never share a low-pass memory, a
+// fractional sample position, a frame buffer, or a sequence counter — each is an
+// independent channel on the wire (§5.2, §19.5).
+interface StreamPipe {
+  channel: number; // wire channel byte (CH_REP / CH_PROSPECT)
+  resampleRatio: number; // this source's hardware rate ÷ 16 kHz (§12)
+  lp: number; // one-pole low-pass memory (anti-aliasing)
+  pickAt: number; // fractional index of the next sample to keep
+  frameBuf: Int16Array; // reused 2048-sample frame; encode copies it out
+  frameFill: number; // samples accumulated into frameBuf so far
+  seq: number; // per-channel frame counter; survives reconnects, resets on disconnect
+}
+function newPipe(channel: number): StreamPipe {
+  return {
+    channel,
+    resampleRatio: 3, // recomputed from the real hardware rate on start (§12)
+    lp: 0,
+    pickAt: 0,
+    frameBuf: new Int16Array(FRAME_SAMPLES),
+    frameFill: 0,
+    seq: 0,
+  };
+}
+const repPipe = newPipe(CH_REP);
+const prospectPipe = newPipe(CH_PROSPECT);
+let prospectOn = false; // is the native system-audio tap currently running?
 
 // ---- 2. Mic dropdown --------------------------------------------------------
 
@@ -97,12 +125,12 @@ async function openMic(): Promise<void> {
   audioCtx = new AudioContext();
   await audioCtx.resume();
   // Use the real hardware rate — not a hard-coded 48000 (§12 edge case).
-  resampleRatio = audioCtx.sampleRate / TARGET_RATE;
+  repPipe.resampleRatio = audioCtx.sampleRate / TARGET_RATE;
 
   sourceNode = audioCtx.createMediaStreamSource(micStream);
   processorNode = audioCtx.createScriptProcessor(4096, 1, 1);
   processorNode.onaudioprocess = (e: AudioProcessingEvent) =>
-    onAudioChunk(e.inputBuffer.getChannelData(0));
+    onAudioChunk(repPipe, e.inputBuffer.getChannelData(0));
   sourceNode.connect(processorNode);
   // A ScriptProcessorNode only fires when routed to an output; its output
   // buffer stays zero-filled, so nothing is audible.
@@ -111,24 +139,26 @@ async function openMic(): Promise<void> {
 
 // Low-pass every sample (anti-aliasing), keep every `resampleRatio`-th one,
 // convert Float32 [−1,1] → Int16 [−32768,32767], emit a frame per 2048 samples.
-function onAudioChunk(input: Float32Array): void {
+// State is per-pipe, so the rep and prospect streams resample independently.
+// The `state` gate means Pause silences BOTH streams at once (1.8, §19.6).
+function onAudioChunk(pipe: StreamPipe, input: Float32Array): void {
   if (state !== "streaming") return;
   for (let i = 0; i < input.length; i++) {
-    lp += LP_ALPHA * (input[i] - lp);
-    if (i >= pickAt) {
-      pickAt += resampleRatio;
-      pushSample(lp);
+    pipe.lp += LP_ALPHA * (input[i] - pipe.lp);
+    if (i >= pipe.pickAt) {
+      pipe.pickAt += pipe.resampleRatio;
+      pushSample(pipe, pipe.lp);
     }
   }
-  pickAt -= input.length; // carry fractional position into the next callback
+  pipe.pickAt -= input.length; // carry fractional position into the next callback
 }
 
-function pushSample(s: number): void {
+function pushSample(pipe: StreamPipe, s: number): void {
   const v = Math.round(s * 32767);
-  frameBuf[frameFill++] = v > 32767 ? 32767 : v < -32768 ? -32768 : v; // clamp
-  if (frameFill === FRAME_SAMPLES) {
-    frameFill = 0;
-    sendFrame(frameBuf);
+  pipe.frameBuf[pipe.frameFill++] = v > 32767 ? 32767 : v < -32768 ? -32768 : v; // clamp
+  if (pipe.frameFill === FRAME_SAMPLES) {
+    pipe.frameFill = 0;
+    sendFrame(pipe);
   }
 }
 
@@ -145,18 +175,18 @@ function encodeAudioFrame(channel: number, seqNum: number, pcm: Int16Array): Arr
   return buf;
 }
 
-function sendFrame(pcm: Int16Array): void {
+function sendFrame(pipe: StreamPipe): void {
   if (!ws || ws.readyState !== WebSocket.OPEN) return;
   // Backpressure: live audio must never queue — drop, but still advance seq
-  // so the server sees the gap (§6.1).
+  // so the server sees the gap (§6.1). Each channel advances its own counter.
   if (ws.bufferedAmount > MAX_BUFFERED) {
     framesDropped++;
-    seq = (seq + 1) & 0xffff;
+    pipe.seq = (pipe.seq + 1) & 0xffff;
     updateCounters();
     return;
   }
-  ws.send(encodeAudioFrame(CH_REP, seq, pcm));
-  seq = (seq + 1) & 0xffff;
+  ws.send(encodeAudioFrame(pipe.channel, pipe.seq, pipe.frameBuf));
+  pipe.seq = (pipe.seq + 1) & 0xffff;
   framesSent++;
   updateCounters();
 }
@@ -183,30 +213,73 @@ async function connect(): Promise<void> {
   setState("connecting");
   try {
     await openMic();
-  } catch {
+  } catch (err) {
+    console.error("[copilot] openMic failed:", err);
     showError("mic unavailable or permission denied");
     setState("idle");
     return;
   }
   void populateDevices(); // real labels become available after permission
   openSocket();
+  void startProspect(); // adds the prospect's voice as a second channel (best-effort)
+}
+
+// Start the native system-audio tap (the prospect's voice). Best-effort: if the
+// bridge is absent or the OS/permission says no, we just run rep-only — the call
+// must never fail because the second channel isn't available (§19.9). The tap is
+// independent of the WebSocket, so it survives reconnects; produced audio only
+// reaches the wire while state === "streaming" (the onAudioChunk gate).
+async function startProspect(): Promise<void> {
+  if (prospectOn || !window.copilot.prospect) return;
+  try {
+    const res = await window.copilot.prospect.start();
+    console.info("[copilot] prospect tap:", res.supported ? `on @ ${res.sampleRate}Hz` : "unsupported — rep-only");
+    if (!res.supported) return; // Windows / macOS <14.4 / denied → rep-only
+    // Reset this pipe's resampler+framer to the tap's real hardware rate.
+    prospectPipe.resampleRatio = res.sampleRate / TARGET_RATE;
+    prospectPipe.lp = 0;
+    prospectPipe.pickAt = 0;
+    prospectPipe.frameFill = 0;
+    prospectOn = true;
+  } catch {
+    // Unsupported or denied — stay rep-only.
+  }
+}
+
+async function stopProspect(): Promise<void> {
+  if (!prospectOn || !window.copilot.prospect) return;
+  prospectOn = false;
+  prospectPipe.seq = 0; // fresh session next connect
+  try {
+    await window.copilot.prospect.stop();
+  } catch {
+    // already stopped — nothing to do
+  }
 }
 
 function openSocket(): void {
+  console.info("[copilot] connecting to", cfg.gatewayWsUrl);
   ws = new WebSocket(cfg.gatewayWsUrl);
   ws.binaryType = "arraybuffer";
   ws.onopen = () => {
+    console.info("[copilot] ws open — sending hello");
     reconnectAttempt = 0;
     sendHello();
     setState("streaming");
   };
-  // Stage 0/1 gateway echoes our frames back — nothing to do with them yet.
-  ws.onmessage = () => {};
-  ws.onclose = () => {
+  ws.onmessage = (e) => {
+    console.info("[copilot] ws message:", e.data);
+  };
+  ws.onclose = (e) => {
+    // code 1006 = abnormal (upgrade refused / no close frame); 4002/4003 = the
+    // gateway rejecting a frame or the hello format. This is the key diagnostic.
+    console.warn("[copilot] ws closed — code", e.code, "reason", JSON.stringify(e.reason));
     ws = null;
     if (!userStopped) scheduleReconnect();
   };
-  ws.onerror = () => {}; // onclose always follows
+  ws.onerror = (e) => {
+    console.error("[copilot] ws error", e); // onclose always follows
+  };
 }
 
 function scheduleReconnect(): void {
@@ -229,7 +302,7 @@ function scheduleReconnect(): void {
 function disconnect(): void {
   userStopped = true;
   teardown();
-  seq = 0; // fresh session next connect (seq persists only across reconnects)
+  repPipe.seq = 0; // fresh session next connect (seq persists only across reconnects)
   setState("idle");
 }
 
@@ -251,10 +324,11 @@ function teardown(): void {
   sourceNode = null;
   micStream = null;
   audioCtx = null;
-  frameFill = 0;
-  lp = 0;
-  pickAt = 0;
+  repPipe.frameFill = 0;
+  repPipe.lp = 0;
+  repPipe.pickAt = 0;
   reconnectAttempt = 0;
+  void stopProspect(); // stop the system-audio tap (not called on reconnects)
 }
 
 function onMicLost(): void {
@@ -314,5 +388,11 @@ pauseBtn.addEventListener("click", () => {
   if (state === "streaming") pause();
   else if (state === "paused") resume();
 });
+
+// Every captured system-audio chunk runs the same resample→encode→send pipeline
+// as the mic, but through the prospect pipe (channel 0x01). onAudioChunk's
+// `state` gate drops chunks unless we're actively streaming, so this is inert
+// until a call connects and pauses with everything else.
+window.copilot.prospect?.onAudio((samples) => onAudioChunk(prospectPipe, samples));
 
 updateUI();

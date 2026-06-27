@@ -36,14 +36,14 @@ No user-facing value yet — this is the launchpad.
 ## Stage 1 — Audio Capture (the input)
 *Why now: everything downstream needs clean two-sided audio.*
 
-- [ ] **1.1** Desktop app shell (macOS + Windows) — `1.1`
-- [ ] **1.2** OS permission handling (mic, system-audio) — `1.5`
-- [ ] **1.3** Microphone capture (rep) — `1.2`
-- [ ] **1.4** System/loopback audio capture (prospect) — `1.3`
-- [ ] **1.5** Two-stream separation at capture (mic vs. system) — `1.4`
-- [ ] **1.6** Local-only / "no audio storage" capture mode — `1.12`
-- [ ] **1.7** Instant pause / mute-listening control — `1.8`
-- [ ] **1.8** Audio device selection / switching — `1.6`
+- [~] **1.1** Desktop app shell (macOS + Windows) — `1.1` (macOS built; Windows not yet)
+- [~] **1.2** OS permission handling (mic, system-audio) — `1.5` (mic + macOS tap TCC prompt; not device-verified)
+- [x] **1.3** Microphone capture (rep) — `1.2`
+- [~] **1.4** System/loopback audio capture (prospect) — `1.3` (macOS CoreAudio tap built + wired; Windows WASAPI pending)
+- [x] **1.5** Two-stream separation at capture (mic vs. system) — `1.4`
+- [x] **1.6** Local-only / "no audio storage" capture mode — `1.12`
+- [x] **1.7** Instant pause / mute-listening control — `1.8`
+- [~] **1.8** Audio device selection / switching — `1.6` (mic picker done; mid-call hot-swap pending)
 
 **Expectation:** the app reliably captures rep + prospect on separate channels, with
 a hard "stop listening" control and no audio persisted. Test on real Zoom/Meet calls.

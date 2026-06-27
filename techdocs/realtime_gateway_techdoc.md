@@ -346,3 +346,25 @@ The `tenant_id` lives only in the in-memory request context.
   `go build ./...`, `go vet`, and `go test ./internal/gateway/...` all green. Part 1
   (gateway) done; Part 2 (native prospect/system-audio capture) and the Stage 2
   orchestrator forward remain — status stays in-progress. — build
+- `2026-06-19` — **Bugfix: WebSocket upgrades were failing with "response does not
+  implement http.Hijacker".** Root cause: `telemetry.HTTPMiddleware` wraps every
+  response in a `statusWriter` (to record the status code) that embedded
+  `http.ResponseWriter` but did not expose `Hijack` — so gorilla's `Upgrade` could not
+  hijack the raw TCP connection and returned HTTP 500. This blocked **all** realtime
+  connections. Fix: added a `Hijack()` method to `statusWriter`
+  (`internal/platform/telemetry/telemetry.go`) that delegates to the underlying
+  ResponseWriter's `http.Hijacker`. Verified end to end: a synthetic client sent 25
+  rep (`0x00`) + 25 prospect (`0x01`) frames; the gateway replied `{"type":"ready"}`
+  and `/metrics` showed `gateway_frames_total{channel="rep"}=25` and
+  `{channel="prospect"}=25`. — build
+- `2026-06-19` — **Confirmed end-to-end against the real macOS GUI client** (previous
+  proof was a synthetic client; this validates the actual desktop app's `hello` format
+  and frame encoding match the parser). Sequence observed: `ws open — sending hello` →
+  gateway accepted the `hello` and replied `{"type":"ready"}` → client reached
+  **streaming** → both `gateway_frames_total{channel="rep"}` and `{channel="prospect"}`
+  climbed (prospect via the ABI-130 native tap @ 48 kHz). No `4001/4002/4003` close
+  codes and no `gateway_ws_protocol_errors_total` increments — hello and both frame
+  channels parsed clean on the first real-client run. The earlier `ERR_CONNECTION_REFUSED`
+  during testing was simply the gateway not running (`go run ./cmd/gateway` with
+  `AUTH_DISABLED=true`), not a protocol fault. Stage-1 gateway path verified live;
+  status stays **in-progress** pending the Stage-2 orchestrator forward. — build

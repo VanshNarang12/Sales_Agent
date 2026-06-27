@@ -6,6 +6,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 )
 
@@ -38,6 +39,14 @@ type Config struct {
 	AuthDisabled bool
 	// DevTenantID is the org id used when AuthDisabled is on.
 	DevTenantID string
+
+	// STTProvider selects the speech-to-text adapter (e.g. "deepgram"). The provider's
+	// API key is a secret fetched from the vault, not stored here (transcription D2).
+	STTProvider string
+	// STTModel is the provider model id (e.g. "nova-3").
+	STTModel string
+	// STTEndpointingMs is the silence threshold (ms) that marks end-of-turn (feature 2.4).
+	STTEndpointingMs int
 }
 
 // Load reads configuration from the environment and validates it.
@@ -53,6 +62,10 @@ func Load(serviceName string) (*Config, error) {
 		AuthSigningKey: os.Getenv("AUTH_SIGNING_KEY"),
 		AuthDisabled:   os.Getenv("AUTH_DISABLED") == "true",
 		DevTenantID:    getenv("DEV_TENANT_ID", "00000000-0000-0000-0000-000000000001"),
+
+		STTProvider:      getenv("STT_PROVIDER", "deepgram"),
+		STTModel:         getenv("STT_MODEL", "nova-3"),
+		STTEndpointingMs: getenvInt("STT_ENDPOINTING_MS", 300),
 	}
 	// AUTH_DISABLED is honored only in dev — never bypass auth in staging/prod.
 	if c.Env != "dev" {
@@ -86,6 +99,16 @@ func (c *Config) validate() error {
 func getenv(key, fallback string) string {
 	if v := os.Getenv(key); v != "" {
 		return v
+	}
+	return fallback
+}
+
+// getenvInt reads an integer env var, returning fallback when unset or unparseable.
+func getenvInt(key string, fallback int) int {
+	if v := os.Getenv(key); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			return n
+		}
 	}
 	return fallback
 }

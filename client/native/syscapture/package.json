@@ -1,0 +1,11 @@
+{
+  "name": "syscapture",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Native macOS system-audio capture (CoreAudio process tap) for the Sales Copilot client.",
+  "main": "index.js",
+  "gypfile": true,
+  "dependencies": {
+    "node-addon-api": "^8.8.0"
+  }
+}

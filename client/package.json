@@ -9,6 +9,9 @@
     "start": "npm run build && electron .",
     "clean": "rm -rf dist"
   },
+  "dependencies": {
+    "syscapture": "file:./native/syscapture"
+  },
   "devDependencies": {
     "@electron/rebuild": "^3.7.2",
     "electron": "^33.0.0",

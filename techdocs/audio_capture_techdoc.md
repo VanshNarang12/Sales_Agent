@@ -476,19 +476,43 @@ worklet is a clean latency upgrade.
 
 ## 17. Open questions / TODO
 
-- System/loopback native addon (the prospect's voice) — the main remaining piece of
-two-sided audio.
+- ✅ System/loopback native addon (the prospect's voice) — **done on macOS** and wired
+in (§19, 2026-06-19). Windows WASAPI loopback (§19.4) still pending.
 - `ScriptProcessorNode` → `AudioWorklet` migration.
 - Replace the one-pole low-pass with a proper FIR / `OfflineAudioContext` resampler
 if speech quality on noisy lines suffers.
 - OS-permission UX (`1.5`) and device hot-swap edge cases (`1.6`).
 - Packaging/code-signing for distribution (later).
 
-## 19. System / prospect audio capture (Part 2 — plan)
+## 19. System / prospect audio capture (Part 2 — implemented)
 
-> **Status:** planned (Part 2 of Stage 1). Part 1 — the rep mic + the full
-> resample→encode→frame→WebSocket path + the gateway-side parser — is done. This part
-> adds the **prospect's** voice as a second, separately-labeled stream.
+> **Status:** implemented on macOS (2026-06-19). The CoreAudio process-tap add-on
+> (`client/native/syscapture/src/addon.mm`) is built **and wired into the app**:
+> the main process loads it, the renderer drives it, and the prospect's voice now
+> streams on channel `0x01` alongside the rep mic. Part 1 (rep mic) was already done.
+> **Still pending:** Windows WASAPI loopback (§19.4) and the real-call exit check
+> (§19.10) on macOS 14.4+ hardware.
+>
+> **Wiring (as built) — differs from the original §19.5 sketch.** The add-on runs in
+> the **main process** (the sandboxed renderer can't load native modules), so prospect
+> audio takes one extra hop the rep mic doesn't:
+>
+> 1. `main.ts` `require("syscapture")` (macOS only; missing/unsupported → rep-only).
+> 2. Renderer calls `prospect.start()` over IPC on connect; main calls the add-on's
+>    `start(cb)`, which returns the tap's hardware `sampleRate`.
+> 3. Each native mono `Float32` chunk → `webContents.send("prospect:audio", …)` →
+>    renderer's `onAudioChunk(prospectPipe, …)`.
+> 4. From there it reuses the **exact** Part-1 pipeline (low-pass → decimate to 16 kHz
+>    → Int16 → 2048-sample frames → `encodeAudioFrame(0x01, seq, …)` → same socket).
+>
+> The rep and prospect streams are now separate **`StreamPipe`** objects in
+> `control.ts` (independent low-pass memory, fractional sample position, frame buffer,
+> and sequence counter). **Pause** silences both because `onAudioChunk` is gated on
+> `state === "streaming"`. The tap is independent of the WebSocket, so it survives
+> reconnects and is torn down only on Disconnect / give-up (and on app `will-quit`).
+> The IPC bridge (`prospect.start/stop/onAudio`) is exposed in `preload.ts`.
+>
+> The original plan below (§19.1–§19.10) is retained as the design rationale.
 
 ### 19.1 The problem this solves
 
@@ -618,4 +642,39 @@ parsing, latency budget, error matrix. — setup
 macOS CoreAudio Tap / Windows WASAPI loopback, the two-stream split (channel `0x01`),
 how it reuses the existing resample/encode/frame pipeline, build tooling,
 lifecycle/pause/consent, files to add, and risks. Plan only — no code yet. — setup
+- `2026-06-19` — **Wired Part 2 in (macOS).** The previously-built `syscapture` add-on
+is now loaded by `main.ts` and driven end-to-end: new IPC `prospect:start`/`prospect:stop`
++ `prospect:audio` (main→renderer), exposed via `preload.ts`. Refactored `control.ts`
+to a per-stream `StreamPipe` (rep + prospect) so each channel has its own resampler/
+framer/seq; prospect frames go out on channel `0x01`; Pause gates both via `state`; the
+tap is torn down on Disconnect/give-up and app `will-quit`; unsupported OS/denied
+permission degrades to rep-only. `tsc` + `npm run build` green. Two-sided capture is
+code-complete on macOS — pending: Windows WASAPI source and the real-call exit check. — build
+- `2026-06-19` — **Verified live on the real macOS GUI client; fixed two blockers the
+synthetic test had bypassed.**
+  1. **Electron mic permission (rep stream).** `getUserMedia` failed with
+  `NotAllowedError` and **no macOS prompt ever appeared**. Root cause: Electron's
+  `session` denies a renderer `media` request by default, so Chromium rejects it
+  *before* macOS TCC is ever consulted — hence no prompt. Fix in `main.ts`:
+  `session.defaultSession.setPermissionRequestHandler` (and `setPermissionCheckHandler`)
+  now return `true` for `permission === "media"`, and on macOS we call
+  `systemPreferences.askForMediaAccess("microphone")` up front to trigger the native
+  TCC prompt. Added `[copilot/main]` diagnostic logging of `getMediaAccessStatus`
+  before/after the ask. Dev-mode caveat documented: TCC attributes the request to the
+  *launching* app (Terminal/iTerm/VS Code), not "Electron"; a prior silent `denied`
+  requires `tccutil reset Microphone`. In the packaged `.app` this is normal (own
+  bundle identity + `NSMicrophoneUsageDescription`, already present in Electron 33).
+  2. **Native add-on ABI mismatch (prospect stream).** `build/Release/syscapture.node`
+  had been compiled against **system Node (ABI 108)**, but the app runs on
+  **Electron 33 (ABI 130)** → Electron silently failed to load it, so the tap fell back
+  to `unsupported — rep-only`. `electron-rebuild` skipped the module (it's a symlinked
+  `file:` dependency it doesn't traverse). Fix: rebuilt explicitly against Electron 33's
+  headers (`USING_ELECTRON_CONFIG_GYPI`), producing the ABI-130 binary at
+  `native/syscapture/bin/darwin-arm64-130/syscapture.node`. End users never hit this —
+  the correct binary ships inside the packaged app.
+  **Result:** real client console showed `prospect tap: on @ 48000Hz`, `ws open —
+  sending hello`, `ws message: {"type":"ready"}`; status reached **streaming** and both
+  `gateway_frames_total{channel="rep"}` and `{channel="prospect"}` climbed. Live macOS
+  capture confirmed working. Status stays **in-progress** — still pending: Windows WASAPI
+  source and the §19.10 exit check on a real Zoom/Meet call with the rep on headphones. — build
 

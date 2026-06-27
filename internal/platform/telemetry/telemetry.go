@@ -5,7 +5,10 @@
 package telemetry
 
 import (
+	"bufio"
 	"context"
+	"errors"
+	"net"
 	"net/http"
 	"time"
 
@@ -87,4 +90,17 @@ type statusWriter struct {
 func (w *statusWriter) WriteHeader(code int) {
 	w.status = code
 	w.ResponseWriter.WriteHeader(code)
+}
+
+// Hijack delegates to the underlying ResponseWriter so WebSocket upgrades work
+// through this metrics wrapper. Embedding http.ResponseWriter does NOT promote
+// Hijack (it isn't part of that interface), so without this method gorilla's
+// Upgrade fails with "response does not implement http.Hijacker" and no realtime
+// connection can be established.
+func (w *statusWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	h, ok := w.ResponseWriter.(http.Hijacker)
+	if !ok {
+		return nil, nil, errors.New("telemetry: underlying ResponseWriter does not implement http.Hijacker")
+	}
+	return h.Hijack()
 }

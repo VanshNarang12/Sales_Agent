@@ -42,12 +42,12 @@ var (
 // helloMsg is the client's opening format-announcement. The client sends it once, as
 // JSON text, before any audio. See techdocs/realtime_gateway_techdoc.md §3.
 type helloMsg struct {
-	Type         string `json:"type"`
-	Role         string `json:"role"`
-	SampleRate   int    `json:"sampleRate"`
-	Encoding     string `json:"encoding"`
-	Channels     int    `json:"channels"`
-	FrameSamples int    `json:"frameSamples"`
+	Type string `json:"type"`
+	Role string `json:"role"`
+	SampleRate int `json:"sampleRate"`
+	Encoding string `json:"encoding"`
+	Channels int `json:"channels"`
+	FrameSamples int `json:"frameSamples"`
 }
 
 // session is the per-connection, in-memory state. Nothing here is persisted — audio is
