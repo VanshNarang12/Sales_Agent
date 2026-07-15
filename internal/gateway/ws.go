@@ -1,9 +1,13 @@
 package gateway
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -11,17 +15,14 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promauto"
 
 	"github.com/VanshNarang12/sales-agent/internal/platform/tenancy"
+	"github.com/VanshNarang12/sales-agent/internal/stt"
 )
 
 var upgrader = websocket.Upgrader{
 	ReadBufferSize:  4096,
 	WriteBufferSize: 4096,
-	// TODO(stage-1): tighten origin checks for the packaged desktop client.
-	CheckOrigin: func(_ *http.Request) bool { return true },
+	CheckOrigin:     func(_ *http.Request) bool { return true },
 }
-
-// Gateway audio metrics. promauto registers them with the default Prometheus registry
-// at package init, so they are exposed on /metrics automatically.
 var (
 	framesTotal = promauto.NewCounterVec(prometheus.CounterOpts{
 		Name: "gateway_frames_total",
@@ -39,30 +40,34 @@ var (
 	}, []string{"code"})
 )
 
-// helloMsg is the client's opening format-announcement. The client sends it once, as
-// JSON text, before any audio. See techdocs/realtime_gateway_techdoc.md §3.
 type helloMsg struct {
-	Type string `json:"type"`
-	Role string `json:"role"`
-	SampleRate int `json:"sampleRate"`
-	Encoding string `json:"encoding"`
-	Channels int `json:"channels"`
-	FrameSamples int `json:"frameSamples"`
+	Type         string `json:"type"`
+	Role         string `json:"role"`
+	SampleRate   int    `json:"sampleRate"`
+	Encoding     string `json:"encoding"`
+	Channels     int    `json:"channels"`
+	FrameSamples int    `json:"frameSamples"`
 }
 
-// session is the per-connection, in-memory state. Nothing here is persisted — audio is
-// ephemeral by default (ADR-008).
+type transcriptMsg struct {
+	Type        string  `json:"type"` // always "transcript"
+	Speaker     string  `json:"speaker"`
+	IsFinal     bool    `json:"isFinal"`
+	SpeechFinal bool    `json:"speechFinal"`
+	Text        string  `json:"text"`
+	StartMs     int64   `json:"startMs"`
+	EndMs       int64   `json:"endMs"`
+	Confidence  float64 `json:"confidence"`
+}
+
 type session struct {
 	gotHello bool
-	lastSeq  [2]uint16 // last seq seen, indexed by channel (0=rep, 1=prospect)
-	seqSeen  [2]bool   // whether any frame has been seen yet on each channel
+	lastSeq  [2]uint16
+	seqSeen  [2]bool
+	stt      *stt.Session
+	writeMu  sync.Mutex
 }
 
-// handleRealtime upgrades the request to a WebSocket and runs the per-connection read
-// loop: validate the hello handshake, then parse audio frames. The connection is
-// already authenticated and tenant-scoped by authMiddleware (in dev, AUTH_DISABLED
-// injects the dev tenant). Stage 2 replaces the per-frame accounting with a gRPC
-// forward to the Call Session Orchestrator.
 func (s *Server) handleRealtime(w http.ResponseWriter, r *http.Request) {
 	tid, err := tenancy.MustFrom(r.Context())
 	if err != nil {
@@ -79,6 +84,13 @@ func (s *Server) handleRealtime(w http.ResponseWriter, r *http.Request) {
 
 	s.log.Info("realtime session opened", "tenant", string(tid))
 	sess := &session{}
+
+	if s.stt != nil {
+		sessionID := newSessionID()
+		sess.stt = s.stt.StartSession(r.Context(), string(tid), sessionID, s.transcriptSink(conn, sess))
+		defer sess.stt.Close() // runs before conn.Close() (LIFO): supervisors stop writing first
+		s.log.Info("transcription session started", "tenant", string(tid), "session", sessionID)
+	}
 
 	for {
 		mt, msg, err := conn.ReadMessage()
@@ -99,59 +111,88 @@ func (s *Server) handleRealtime(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// handleHello parses and validates the opening hello message. On success it records
-// that the format was accepted and replies {"type":"ready"}. It returns false (ending
-// the session) after sending a close frame on any protocol/format error.
 func (s *Server) handleHello(conn *websocket.Conn, sess *session, msg []byte) bool {
 	var h helloMsg
 	if err := json.Unmarshal(msg, &h); err != nil || h.Type != "hello" {
-		s.closeWS(conn, wsProtocolError, "expected hello")
+		s.closeWS(conn, sess, wsProtocolError, "expected hello")
 		return false
 	}
 	if h.Encoding != "pcm_s16le" || h.SampleRate != 16000 || h.Channels != 1 {
-		s.closeWS(conn, wsUnsupportedFormat, "unsupported audio format")
+		s.closeWS(conn, sess, wsUnsupportedFormat, "unsupported audio format")
 		return false
 	}
+	s.log.Info("packet: hello", "role", h.Role, "sampleRate", h.SampleRate, "encoding", h.Encoding, "channels", h.Channels)
 	sess.gotHello = true
-	if err := conn.WriteMessage(websocket.TextMessage, []byte(`{"type":"ready"}`)); err != nil {
+	sess.writeMu.Lock()
+	err := conn.WriteMessage(websocket.TextMessage, []byte(`{"type":"ready"}`))
+	sess.writeMu.Unlock()
+	if err != nil {
 		return false
 	}
 	return true
 }
 
-// handleAudio unpacks one binary audio frame, requires that hello arrived first, and
-// records frame/gap metrics. It returns false (ending the session) on malformed input.
-// Stage 2: forward (tenant, sessionID, channel, seq, pcm) to the orchestrator.
 func (s *Server) handleAudio(conn *websocket.Conn, sess *session, msg []byte) bool {
 	if !sess.gotHello {
-		s.closeWS(conn, wsProtocolError, "audio before hello")
+		s.closeWS(conn, sess, wsProtocolError, "audio before hello")
 		return false
 	}
-	channel, seq, _, err := parseAudioFrame(msg)
+	channel, seq, pcm, err := parseAudioFrame(msg)
 	if err != nil {
-		s.closeWS(conn, wsProtocolError, "malformed frame")
+		s.closeWS(conn, sess, wsProtocolError, "malformed frame")
 		return false
 	}
 
 	label := channelLabel(channel)
 	framesTotal.WithLabelValues(label).Inc()
-
-	// A gap means frames were lost in transit — expected under network backpressure
-	// (the client drops stale audio but still advances seq). Record it; never fatal.
-	// uint16 addition wraps 65535->0, matching the client's sequence wrap.
 	if sess.seqSeen[channel] && seq != sess.lastSeq[channel]+1 {
 		frameGapTotal.WithLabelValues(label).Inc()
 	}
 	sess.lastSeq[channel] = seq
 	sess.seqSeen[channel] = true
+	if sess.stt != nil {
+		sess.stt.Write(channel, pcm)
+	}
 	return true
 }
 
-// closeWS logs the reason, records the protocol-error metric, and sends a WebSocket
-// close control message with the given application close code.
-func (s *Server) closeWS(conn *websocket.Conn, code int, reason string) {
+func (s *Server) transcriptSink(conn *websocket.Conn, sess *session) stt.EventFunc {
+	return func(ev stt.TranscriptEvent) {
+		if ev.IsFinal && ev.Text != "" {
+			fmt.Printf("[transcript] %-9s %s\n", string(ev.Speaker)+":", ev.Text)
+		}
+
+		b, err := json.Marshal(transcriptMsg{
+			Type:        "transcript",
+			Speaker:     string(ev.Speaker),
+			IsFinal:     ev.IsFinal,
+			SpeechFinal: ev.SpeechFinal,
+			Text:        ev.Text,
+			StartMs:     ev.StartMs,
+			EndMs:       ev.EndMs,
+			Confidence:  ev.Confidence,
+		})
+		if err != nil {
+			return
+		}
+		sess.writeMu.Lock()
+		err = conn.WriteMessage(websocket.TextMessage, b)
+		sess.writeMu.Unlock()
+		if err != nil {
+			s.log.Warn("transcript write failed", "err", err)
+		}
+	}
+}
+func newSessionID() string {
+	var b [16]byte
+	_, _ = rand.Read(b[:])
+	return hex.EncodeToString(b[:])
+}
+func (s *Server) closeWS(conn *websocket.Conn, sess *session, code int, reason string) {
 	s.log.Warn("closing realtime session", "code", code, "reason", reason)
 	protocolErrors.WithLabelValues(strconv.Itoa(code)).Inc()
+	sess.writeMu.Lock()
+	defer sess.writeMu.Unlock()
 	_ = conn.WriteControl(
 		websocket.CloseMessage,
 		websocket.FormatCloseMessage(code, reason),

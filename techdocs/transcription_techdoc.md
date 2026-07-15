@@ -8,8 +8,8 @@
 | **Architecture** | `ARCHITECTURE.md` — §7.1 (STT), §4/§5 (planes, hot path), ADR-002 (Go-only) |
 | **Plane** | Real-Time |
 | **Owner** | Vansh |
-| **Status** | in-progress (scope/plan — no code yet) |
-| **Last updated** | 2026-06-19 |
+| **Status** | done |
+| **Last updated** | 2026-07-14 |
 
 ## 1. Overview
 
@@ -231,6 +231,10 @@ Telemetry-first (coding standard). Metrics (all labeled `tenant_id`, `speaker`):
   gateway→Deepgram RTT) to see which dominates before optimizing.
 - **`nova-3` vs `flux`:** confirm which Deepgram model best hits the latency/accuracy point
   for sales speech; `STT_MODEL` makes this a config flip.
+- **Dev console print is not prod-safe:** `transcriptSink` prints raw transcript text to the
+  gateway console (`internal/gateway/ws.go`) for local visibility — coding-standards §7
+  forbids transcript content in production logs. Gate it behind a dev flag (e.g.
+  `STT_LOG_TRANSCRIPTS`) or remove it before any real deployment.
 
 ## 14. Changelog
 - `2026-06-19` — Techdoc created at the start of Stage 2. Scope/plan only — no code yet.
@@ -275,3 +279,59 @@ Telemetry-first (coding standard). Metrics (all labeled `tenant_id`, `speaker`):
   on `ctx.Done()` so teardown never depends on the provider. `manager_test.go` (fake
   provider/stream) covers lazy-open, fan-out, reconnect, open-failure retry, and clean
   Close; `go test -race` green. — build
+- `2026-06-27` — **Wired the STT package into the live gateway path — the substrate now
+  runs end to end (was orphaned: built but `ws.go` discarded PCM).** Four edits, no new
+  files:
+  1. **Startup (`cmd/gateway/main.go`).** New `buildSTT(ctx, cfg, log)` constructs the
+     manager once at boot: `switch cfg.STTProvider` → for `deepgram`, fetch
+     `secrets.KeyDeepgramAPI` from the vault (`EnvStore`), build `deepgram.New(...)` with
+     `STTModel`/`STTEndpointingMs`, and `stt.NewManager`. A **missing key or unknown
+     provider returns nil (audio-only)** and logs why — it is never a fatal boot error
+     (D2 server-side key; §8 degradation). The key is read server-side only.
+  2. **DI (`internal/gateway/server.go`).** `Server` gains an `stt *stt.Manager` field;
+     `New(cfg, signingKey, sttMgr, log)` takes it. `nil` ⇒ the gateway runs without
+     transcription.
+  3. **Per-call lifecycle + transcript return (`internal/gateway/ws.go`).** On connect,
+     if a manager exists, `handleRealtime` mints a `newSessionID()` (16 bytes from
+     `crypto/rand`, hex — process-unique, no new dep) and calls
+     `Manager.StartSession(r.Context(), tenant, sessionID, transcriptSink)`; teardown is a
+     `defer sess.stt.Close()` placed **after** `defer conn.Close()` so (LIFO) supervisors
+     stop writing before the socket shuts. `handleAudio` now captures `pcm` (was `_`) and
+     calls `sess.stt.Write(channel, pcm)` — the lazy-open trigger. `transcriptSink`
+     marshals each `TranscriptEvent` → a new `transcriptMsg` JSON (`{"type":"transcript",
+     speaker,isFinal,speechFinal,text,startMs,endMs,confidence}`) and writes it back down
+     the same WS. **Concurrency fix:** the manager fans events from up to two supervisor
+     goroutines while the read loop also writes (`ready`/close frames), but
+     gorilla/websocket forbids concurrent writers — so `session` gained a `writeMu` that
+     guards **every** write (`ready`, `closeWS` close frame, and each transcript).
+     `closeWS` now takes `sess` to hold that lock.
+  4. **Latency gate (`internal/stt/manager.go`).** Added the `stt_partial_latency_ms`
+     histogram (feature 2.6 / §12) with buckets straddling the 400 ms target. Each
+     `channelStream` got an atomic `lastFrameNs` stamped in `Write` on send; `pump` (now
+     `pump(cs, stream, label)`) observes `now − lastFrameNs` on every partial. Documented
+     in-code + §13 as an **approximation** (newest-frame proxy — a partial may cover
+     earlier audio, so it can read low); precise per-segment attribution stays a §13 TODO.
+  `gofmt`, `go build ./...`, `go vet ./...`, `go test -race ./internal/...` all green
+  (existing gateway + stt tests still pass; no behavior change when STT is nil).
+  **Not yet done (Stage 2 exit gate):** no run against the real Deepgram API yet — needs a
+  live `DEEPGRAM_API_KEY` to confirm labeled partials/finals stream back and the
+  `<400 ms` p95 holds on a real call. Status stays **in-progress**. — build
+- `2026-07-14` — **Stage 2 closed out — transcription verified live against the real
+  Deepgram API.** With a real `DEEPGRAM_API_KEY` sourced into the gateway environment
+  (`set -a; source .env; set +a`), a live macOS session streamed speaker-labeled,
+  punctuated **partials + finals** end to end. The gateway now prints finalized phrases to
+  its console for dev visibility — `[transcript] rep:/prospect: <text>` from a `fmt.Printf`
+  in `transcriptSink` (`internal/gateway/ws.go`), finals only, so the terminal stays
+  readable. This confirms D1–D4 on real traffic: Deepgram `nova-3`, one stream per
+  (session, channel), channel→speaker labeling (no ML diarization), and the server-side key
+  held backend-only (never sent to the client, D2).
+  **Dev-only caveat:** the console print emits raw transcript text, which
+  `coding_standards_techdoc.md` §7 forbids in production logs — gate it behind a flag or
+  remove it before any real deployment (tracked in §13).
+  **Residuals (measurement/tuning, not blockers to Stage 3):** (a) confirm the `<400 ms`
+  p95 gate on real calls via `stt_partial_latency_ms` — instrumented (`manager.go`) and
+  readable from `/metrics`, but the newest-frame proxy reads low and excludes the ~150 ms
+  client capture leg (`audio_capture_techdoc.md` §8), so true end-to-end is higher;
+  (b) a two-sided real Zoom/Meet call with the rep on headphones to confirm the `prospect`
+  label in the wild; (c) endpointing tuning. Status → **done** (substrate built and verified
+  live; residuals are measurement/tuning). — build

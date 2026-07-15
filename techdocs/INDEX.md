@@ -62,8 +62,8 @@ Status: `planned` · `in-progress` · `done`.
 | [`coding_standards_techdoc.md`](./coding_standards_techdoc.md) | all | — | §19, ADR-002 | done |
 | [`project_foundations_techdoc.md`](./project_foundations_techdoc.md) | Stage 0 | 0.1–0.9, `20.8`,`20.9`,`20.1`,`16.1`,`15.6`,`15.1`,`15.9`,`18.1` | §9,§13,§17 | in-progress |
 | [`audio_capture_techdoc.md`](./audio_capture_techdoc.md) | Stage 1 | `1.1`–`1.6`,`1.8`,`1.12` | §10 | in-progress |
-| [`transcription_techdoc.md`](./transcription_techdoc.md) | Stage 2 | `2.1`–`2.6`,`2.10` | §7.1 | in-progress |
-| _detection_techdoc.md_ | Stage 3 | `3.1`–`3.4`,`3.11` | §7.2 | planned |
+| [`transcription_techdoc.md`](./transcription_techdoc.md) | Stage 2 | `2.1`–`2.6`,`2.10` | §7.1 | done |
+| [`detection_techdoc.md`](./detection_techdoc.md) | Stage 3 | `3.1`–`3.4`,`3.11` | §7.2 | in-progress |
 | _knowledge_base_techdoc.md_ | Stage 4 / 16 | `4.1`,`4.2`,`4.5` + ingestion | §7.3,§9 | planned |
 | _rag_retrieval_techdoc.md_ | Stage 5 | `5.1`,`5.3`–`5.6` | §7.3 | planned |
 | _suggestion_generation_techdoc.md_ | Stage 6 | `6.1`–`6.4`,`6.8`,`6.12`,`18.6`,`18.9` | §7.4 | planned |

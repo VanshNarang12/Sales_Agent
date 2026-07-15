@@ -13,18 +13,23 @@ import (
 	"github.com/VanshNarang12/sales-agent/internal/platform/config"
 	"github.com/VanshNarang12/sales-agent/internal/platform/telemetry"
 	"github.com/VanshNarang12/sales-agent/internal/platform/tenancy"
+	"github.com/VanshNarang12/sales-agent/internal/stt"
 )
 
 // Server holds gateway dependencies.
 type Server struct {
 	cfg        *config.Config
 	signingKey string
-	log        *slog.Logger
+	// stt transcribes the per-channel PCM that arrives on the realtime socket. It is
+	// nil when STT is unconfigured (e.g. no API key) — the gateway then degrades to
+	// audio-only and the call still runs (transcription_techdoc.md §8).
+	stt *stt.Manager
+	log *slog.Logger
 }
 
-// New constructs a gateway server.
-func New(cfg *config.Config, signingKey string, log *slog.Logger) *Server {
-	return &Server{cfg: cfg, signingKey: signingKey, log: log}
+// New constructs a gateway server. sttMgr may be nil to run without transcription.
+func New(cfg *config.Config, signingKey string, sttMgr *stt.Manager, log *slog.Logger) *Server {
+	return &Server{cfg: cfg, signingKey: signingKey, stt: sttMgr, log: log}
 }
 
 // Handler builds the HTTP/WS routes with telemetry and auth wired in.

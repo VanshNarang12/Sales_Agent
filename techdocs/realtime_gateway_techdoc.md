@@ -368,3 +368,15 @@ The `tenant_id` lives only in the in-memory request context.
   during testing was simply the gateway not running (`go run ./cmd/gateway` with
   `AUTH_DISABLED=true`), not a protocol fault. Stage-1 gateway path verified live;
   status stays **in-progress** pending the Stage-2 orchestrator forward. — build
+- `2026-06-27` — **Stage-2 hook-up (co-located, not the gRPC orchestrator yet).** `ws.go`
+  no longer discards PCM after accounting: `handleAudio` now forwards `(channel, pcm)` to
+  an `stt.Session` (per connection, started in `handleRealtime`, torn down via a `defer`
+  ordered before `conn.Close()`), and transcripts come back **down the same WebSocket** as
+  a new `{"type":"transcript",…}` text message. Per D2 in the transcription techdoc, STT
+  runs **in-process** with the key held server-side — the `cmd/realtime` gRPC orchestrator
+  split described in §11/§6 remains the future shape, adopted when Stage 3+ needs fan-out.
+  Added a per-connection `writeMu` to `session` (and threaded `sess` into `closeWS`)
+  because transcript writes from STT goroutines now race the read loop's `ready`/close
+  writes, which gorilla/websocket forbids. Full detail in
+  [`transcription_techdoc.md`](./transcription_techdoc.md) changelog. `go build`/`vet`/
+  `test -race` green. — build

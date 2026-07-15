@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -82,6 +83,16 @@ var (
 		Name: "stt_finals_total",
 		Help: "Final transcript events emitted, by speaker.",
 	}, []string{"speaker"})
+
+	// partialLatency is the Stage-2 <400 ms gate (feature 2.6). It measures the most
+	// recent PCM frame sent → the partial it produced. NOTE: this is an approximation
+	// (newest-frame proxy) — a partial may cover earlier audio, so it can read low.
+	// Precise per-segment attribution is tracked in transcription_techdoc.md §13.
+	partialLatency = promauto.NewHistogramVec(prometheus.HistogramOpts{
+		Name:    "stt_partial_latency_ms",
+		Help:    "Latency (ms) from the latest PCM frame to the partial it produced, by speaker.",
+		Buckets: []float64{50, 100, 200, 300, 400, 600, 800, 1200, 2000},
+	}, []string{"speaker"})
 )
 
 // Session is the per-call transcription state: up to one live Stream per speaker, each
@@ -107,6 +118,7 @@ type channelStream struct {
 	speaker Speaker
 	mu      sync.Mutex
 	cur     Stream
+	lastFrameNs atomic.Int64
 }
 
 // StartSession creates a Session bound to ctx. When the connection ends the caller must
@@ -144,6 +156,7 @@ func (s *Session) Write(channel byte, pcm []byte) {
 	cur := cs.cur
 	cs.mu.Unlock()
 	if cur != nil {
+		cs.lastFrameNs.Store(time.Now().UnixNano())
 		_ = cur.Send(pcm)
 	}
 }
@@ -185,7 +198,7 @@ func (s *Session) supervise(cs *channelStream) {
 		// Forward events until the stream ends (provider error) or the session is
 		// torn down. We must select on ctx here rather than only ranging over
 		// Events(): teardown cannot depend on the provider closing its channel.
-		s.pump(stream, label)
+		s.pump(cs, stream, label)
 
 		cs.mu.Lock()
 		cs.cur = nil
@@ -209,7 +222,7 @@ func (s *Session) supervise(cs *channelStream) {
 // pump forwards a stream's events to the consumer, recording per-speaker metrics. It
 // returns when the stream's Events channel closes OR the session ctx is cancelled —
 // the latter ensures Close never blocks on a stream that hasn't closed its channel.
-func (s *Session) pump(stream Stream, label string) {
+func (s *Session) pump(cs *channelStream, stream Stream, label string) {
 	events := stream.Events()
 	for {
 		select {
@@ -223,6 +236,9 @@ func (s *Session) pump(stream Stream, label string) {
 				finalsTotal.WithLabelValues(label).Inc()
 			} else {
 				partialsTotal.WithLabelValues(label).Inc()
+				if t := cs.lastFrameNs.Load(); t > 0 {
+					partialLatency.WithLabelValues(label).Observe(float64(time.Now().UnixNano()-t) / 1e6)
+				}
 			}
 			s.onEvent(ev)
 		}

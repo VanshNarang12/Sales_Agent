@@ -1,6 +1,3 @@
-// Command gateway is the Realtime Gateway entrypoint. It loads config, initializes
-// telemetry, builds the gateway HTTP/WS server, and serves with graceful shutdown.
-// Kept thin: all logic lives in internal/gateway and internal/platform.
 package main
 
 import (
@@ -17,6 +14,8 @@ import (
 	"github.com/VanshNarang12/sales-agent/internal/platform/config"
 	"github.com/VanshNarang12/sales-agent/internal/platform/secrets"
 	"github.com/VanshNarang12/sales-agent/internal/platform/telemetry"
+	"github.com/VanshNarang12/sales-agent/internal/stt"
+	"github.com/VanshNarang12/sales-agent/internal/stt/deepgram"
 )
 
 const serviceName = "gateway"
@@ -38,9 +37,6 @@ func run(log *slog.Logger) error {
 	if err != nil {
 		return err
 	}
-
-	// Secrets: signing key for session tokens (env-backed locally). Not needed when
-	// auth is disabled for dev (login/OAuth deferred to Stage 0.5).
 	var signingKey string
 	if !cfg.AuthDisabled {
 		signingKey, err = secrets.EnvStore{}.Get(ctx, "AUTH_SIGNING_KEY")
@@ -61,9 +57,11 @@ func run(log *slog.Logger) error {
 		_ = shutdownTelemetry(ctx)
 	}()
 
+	sttMgr := buildSTT(ctx, cfg, log)
+
 	srv := &http.Server{
 		Addr:              cfg.HTTPAddr,
-		Handler:           gateway.New(cfg, signingKey, log).Handler(),
+		Handler:           gateway.New(cfg, signingKey, sttMgr, log).Handler(),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
@@ -80,4 +78,26 @@ func run(log *slog.Logger) error {
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	return srv.Shutdown(shutdownCtx)
+}
+
+func buildSTT(ctx context.Context, cfg *config.Config, log *slog.Logger) *stt.Manager {
+	switch cfg.STTProvider {
+	case "deepgram":
+		key, err := secrets.EnvStore{}.Get(ctx, secrets.KeyDeepgramAPI)
+		if err != nil {
+			log.Warn("STT disabled: Deepgram key unavailable, running audio-only", "err", err)
+			return nil
+		}
+		prov := deepgram.New(deepgram.Config{
+			APIKey:        key,
+			Model:         cfg.STTModel,
+			EndpointingMs: cfg.STTEndpointingMs,
+			Logger:        log,
+		})
+		log.Info("STT enabled", "provider", cfg.STTProvider, "model", cfg.STTModel)
+		return stt.NewManager(prov, log)
+	default:
+		log.Warn("STT disabled: unknown provider, running audio-only", "provider", cfg.STTProvider)
+		return nil
+	}
 }
