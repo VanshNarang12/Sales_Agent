@@ -20,7 +20,7 @@
 
 1. [Audio & Screen Capture](#1-audio--screen-capture)
 2. [Real-Time Transcription & Diarization](#2-real-time-transcription--diarization)
-3. [Intent, Objection & Signal Detection](#3-intent-objection--signal-detection)
+3. [Suggestion Trigger](#3-suggestion-trigger)
 4. [Knowledge Base & Document Ingestion](#4-knowledge-base--document-ingestion)
 5. [Retrieval & Grounding (RAG)](#5-retrieval--grounding-rag)
 6. [Real-Time Suggestion Generation](#6-real-time-suggestion-generation)
@@ -71,9 +71,9 @@ The foundation: get clean audio of both the rep and the prospect into the pipeli
 | 2.1 | **Streaming speech-to-text** (partial + final transcripts) | MVP | 🔴 | The substrate for everything else; needs WebSocket streaming STT. |
 | 2.2 | **Sub-400 ms transcription latency target** | MVP | 🔴 | Research: ~300 ms is the conversational threshold; >400 ms and prompts arrive late. ElevenLabs Scribe v2 (<150 ms), AssemblyAI Universal-3 (~307 ms P50), Deepgram Nova-3 are candidates. |
 | 2.3 | **Speaker labeling (rep vs. prospect)** | MVP | 🔴 | Driven primarily by the two-stream split (1.4); ML diarization as a fallback for single-stream sources. |
-| 2.4 | **End-of-turn / end-of-speech detection** | MVP | 🔴 | Lets the system fire suggestions at natural pauses, not mid-sentence. |
+| 2.4 | **End-of-turn / end-of-speech detection** | MVP | 🟠 | Cleaner turn boundaries for transcript readability + the look-back window. (No longer used to auto-fire suggestions — the rep triggers via the Suggest button.) |
 | 2.5 | **Punctuation, casing & formatting** | MVP | 🟠 | Readable transcript for the post-call summary and for RAG quality. |
-| 2.6 | **Custom vocabulary / keyterm prompting** (product names, competitors, acronyms) | V1 | 🔴 | Sales calls are full of proper nouns STT mishears; boosting these directly improves objection/competitor detection. |
+| 2.6 | **Custom vocabulary / keyterm prompting** (product names, competitors, acronyms) | V1 | 🔴 | Sales calls are full of proper nouns STT mishears; boosting these directly improves the transcript window the query builder reads. |
 | 2.7 | **Multi-accent / noisy-line robustness** | V1 | 🟠 | Real calls have accents, crosstalk, and bad connections. |
 | 2.8 | **Live PII redaction in transcript** (cards, SSNs, etc.) | V2 | 🟠 | Reduces sensitive-data exposure; required for regulated verticals. |
 | 2.9 | **Multi-language transcription** (beyond English) | Future | 🟢 | Docs: do not build before English is excellent. |
@@ -82,23 +82,31 @@ The foundation: get clean audio of both the rep and the prospect into the pipeli
 
 ---
 
-## 3. Intent, Objection & Signal Detection
+## 3. Suggestion Trigger
 
-The "trigger" layer that decides *when* to surface a card.
+The layer that decides *when* to surface a card. **The MVP trigger is a manual
+"Suggest" button — the rep decides the moment; there is no automatic detection.** On a
+click we snapshot the last N minutes of transcript, a light LLM builds a clean query,
+and retrieval + generation answer it. This removes the flappy "when did the question
+end / is this an objection" problem entirely.
+
+**No auto-detection, ever** — the button is the only live trigger, permanently. The old
+live-detection features (`3.5`–`3.10`) are cut from the live path: the ones that still
+add value move to **post-call analysis / coaching** (Stage 10/21); the rest are dropped.
 
 | # | Feature | Tier | Pri | Rationale |
 | --- | --- | --- | --- | --- |
-| 3.1 | **Objection detection** ("too expensive," "not now," "send info," "need approval," "already use a competitor") | MVP | 🔴 | The #1 killer use case — buyer refusal is where deals die. |
-| 3.2 | **Buyer-question detection** (product Q&A, integration, pricing, security) | MVP | 🔴 | Triggers document-grounded answers — the core LivePitchAI/Aircover behavior. |
-| 3.3 | **Competitor-mention detection** | MVP | 🔴 | Fires the live battlecard (killer feature #2); Nomi's headline behavior. |
-| 3.4 | **Pricing / discount-request detection** | MVP | 🔴 | High-risk moment; pairs with "do-not-say" guardrails. |
-| 3.5 | **Buying-signal detection** (timeline, budget, authority, urgency cues) | V1 | 🟠 | Surfaces next-best-action and feeds CRM/deal fields. |
-| 3.6 | **Risk / red-flag detection** (legal/security/compliance promises about to be made) | V1 | 🔴 | Powers the "do-not-say" guardrail (killer feature #3). |
-| 3.7 | **Discovery-gap detection** (methodology fields not yet covered) | V1 | 🟠 | Prompts junior reps to ask the right discovery question. |
-| 3.8 | **Sentiment / tone shift detection** | V2 | 🟢 | Nomi adapts prompts to tone & price pressure; useful but secondary. |
-| 3.9 | **Talk-ratio / monologue / interruption detection** | V2 | 🟢 | Live nudge: "you've been talking for 3 min — ask a question." |
-| 3.10 | **Configurable trigger phrases / trackers** (admin-defined keywords) | V1 | 🟠 | Gong-style "smart trackers"; lets teams define their own moments. |
-| 3.11 | **Suggestion-throttling / relevance gating** | MVP | 🔴 | Too many prompts make reps worse — must suppress low-confidence/low-value triggers. |
+| 3.1 | **Suggest-button trigger** (inbound WS click; the only trigger) | MVP | 🔴 | The rep knows the exact moment they want help — one click, zero false fires. Replaces all auto-detection. |
+| 3.2 | **Last-N-minutes transcript window capture** (configurable look-back) | MVP | 🔴 | The customer's question lives in the recent exchange; a tunable window captures it without prompt bloat. |
+| 3.3 | **Light-LLM query builder** (noisy window → clean search query) | MVP | 🔴 | Sales transcripts are noisy; a cheap model extracting intent makes retrieval hit the right docs (vs. embedding raw transcript). |
+| 3.4 | **`SuggestRequest → BuiltQuery` contract to retrieval** | MVP | 🔴 | Clean handoff to Stage 5; shaped to be the retrieval input + a future gRPC message. |
+| 3.5 | **Buying-signal surfacing** — *post-call only* (coaching/CRM) | V1 | 🟠 | Surfaces next-best-action; computed after the call, not a live listener. |
+| 3.6 | **"Do-not-say" guardrail on the copilot's own output** | V1 | 🔴 | Killer #3, kept — the Guardrail Service vets each generated card (legal/pricing/security) before display. It checks *our suggestion*, not the rep's speech, so it needs no auto-detect. |
+| 3.7 | **Discovery-gap surfacing** — *post-call only* (coaching) | V1 | 🟠 | Shows which methodology fields went uncovered; a post-call review, not a live prompt. |
+| 3.8 | *(dropped — live sentiment detection is auto-detect)* Sentiment / tone-shift | — | ⚪ | Only relevant as post-call analytics if ever revisited. |
+| 3.9 | *(dropped — live talk-ratio nudge is auto-detect)* Talk-ratio / monologue | — | ⚪ | Only relevant as post-call analytics if ever revisited. |
+| 3.10 | *(dropped)* Configurable trigger phrases / trackers | — | ⚪ | Existed only to auto-fire cards; no auto-fire, so removed. |
+| 3.11 | **Button rate-limit / in-flight guard** | MVP | 🔴 | One suggestion turn per session at a time; a double-click must not fire two turns or race two answers onto the overlay. |
 
 ---
 
@@ -148,7 +156,7 @@ The grounding source — what makes answers "approved," not generic.
 | 6.2 | **Suggested verbatim response / talk-track** | MVP | 🔴 | "What to say now" — the core deliverable. |
 | 6.3 | **Source citation rendered on the card** | MVP | 🔴 | Trust + lets the rep verify at a glance. |
 | 6.4 | **Confidence indicator on the card** | MVP | 🟠 | Tells the rep how much to trust it (esp. pricing/security). |
-| 6.5 | **"Do-not-say" / guardrail warnings** | MVP | 🔴 | Killer feature #3: warn before over-promising on legal/pricing/security/timeline. |
+| 6.5 | **"Do-not-say" / guardrail on generated cards** | MVP | 🔴 | Killer feature #3: the guardrail vets each suggestion before display so we never advise over-promising on legal/pricing/security/timeline. (Checks our output, not the rep's speech — no auto-detect.) |
 | 6.6 | **Clarifying / discovery-question suggestions** | MVP | 🟠 | Helps junior reps ask rather than pitch. |
 | 6.7 | **Stall-line suggestions** ("Great question — let me get you the precise answer") | MVP | 🟠 | Buys the rep time gracefully; explicitly requested in the docs. |
 | 6.8 | **Sub-2–4-second end-to-end suggestion latency** | MVP | 🔴 | The product's pass/fail metric per the docs. |
@@ -167,13 +175,13 @@ The grounding source — what makes answers "approved," not generic.
 | 7.2 | **Glanceable, peripheral design** (not a wall of text) | MVP | 🔴 | Research: split attention is the #1 UX failure of live overlays. |
 | 7.3 | **Draggable / resizable / repositionable window** | MVP | 🟠 | Reps place it where it doesn't block faces. |
 | 7.4 | **Keyboard shortcuts / hotkeys** ("Answer this," "Objection," "Discovery Q," "Stall line," "Summarize concern") | MVP | 🔴 | Hands-on-keyboard control without breaking eye contact. |
-| 7.5 | **Manual "Ask" box** (rep types/clicks a question) | MVP | 🟠 | When auto-detection misses, the rep can pull an answer. |
+| 7.5 | **"Suggest" button + manual "Ask" box** (rep clicks Suggest, or types a specific question) | MVP | 🔴 | **Suggest** is the primary trigger (answers from the recent transcript); the Ask box lets the rep pull an answer to a specific typed question. |
 | 7.6 | **Card dismissal / snooze / pin** | V1 | 🟠 | Manage clutter; keep one card visible. |
 | 7.7 | **Privacy: overlay not captured by screen-share** (`setContentProtection` / WDA_EXCLUDEFROMCAPTURE / NSWindowSharingNone) | MVP | 🔴 | The rep's coaching is private — visible only to the rep, *not* the prospect on a shared screen. (This is privacy-for-the-rep, **not** covert capture of the prospect.) |
 | 7.7a | **Transparent disclosure that AI assistance is in use** (paired with 7.7) | MVP | 🔴 | Distinguishes us from "covert cheat" tools — the *assistance* is private but its *existence* is disclosed. |
 | 7.8 | **Dark/light theme & font-size controls** | V1 | 🟢 | Readability in different lighting / on shared screens. |
 | 7.9 | **In-call inline feedback on each card** (helpful / not helpful / wrong / too late) | MVP | 🔴 | Powers the success metrics and the outcome-learning loop. |
-| 7.10 | **Live objection/competitor "ticker"** of detected moments | V1 | 🟢 | Lightweight awareness of what the AI is tracking. |
+| 7.10 | **"Ticker" of recent suggestions** (past Suggest answers this call) | V1 | 🟢 | Lightweight history of what the rep has already pulled via Suggest this call. |
 | 7.11 | **Minimal "focus mode"** (one card, nothing else) | V1 | 🟠 | For reps who find overlays distracting. |
 | 7.12 | **Mock-call / practice mode** | V1 | 🟠 | Reps trial the tool risk-free; aids onboarding & buyer demos. |
 
@@ -186,8 +194,8 @@ What makes this a *sales* copilot, not a generic LLM overlay (a core moat per th
 | # | Feature | Tier | Pri | Rationale |
 | --- | --- | --- | --- | --- |
 | 8.1 | **Real-time objection-handling cards** | MVP | 🔴 | **Killer feature #1.** |
-| 8.2 | **Live competitor battlecards** | MVP | 🔴 | **Killer feature #2** — appear when a competitor is named. |
-| 8.3 | **"Do-not-say" compliance guardrails** | MVP | 🔴 | **Killer feature #3.** |
+| 8.2 | **Competitor battlecards** | MVP | 🔴 | **Killer feature #2** — pulled via the Suggest button when a competitor comes up (not auto-surfaced). |
+| 8.3 | **"Do-not-say" compliance guardrails** | MVP | 🔴 | **Killer feature #3** — a guardrail on the copilot's own generated cards (see 6.5), not a live listener. |
 | 8.4 | **Product Q&A answers (cited)** | MVP | 🔴 | Reps don't know every technical detail. |
 | 8.5 | **Pricing / packaging guidance** | MVP | 🔴 | Prevents wrong numbers / overpromising. |
 | 8.6 | **Discovery-question prompts** | MVP | 🟠 | Helps reps qualify before pitching. |
@@ -256,7 +264,7 @@ What makes this a *sales* copilot, not a generic LLM overlay (a core moat per th
 | 12.2 | **Objection → response mapping editor** | MVP | 🔴 | The core authoring surface for killer feature #1. |
 | 12.3 | **Battlecard editor** (per competitor) | MVP | 🔴 | Authoring for killer feature #2. |
 | 12.4 | **"Do-not-say" rules editor** | MVP | 🔴 | Authoring for killer feature #3. |
-| 12.5 | **Trigger/tracker configuration** (keywords → cards) | V1 | 🟠 | Lets teams define their own live moments. |
+| 12.5 | *(dropped)* Trigger/tracker configuration (keywords → auto-cards) | — | ⚪ | Existed to auto-fire cards; removed — the rep triggers via the Suggest button. |
 | 12.6 | **Team & role management** (admin/manager/rep) | V1 | 🔴 | Needed for team plans & permissions. |
 | 12.7 | **Content approval workflow** | V1 | 🔴 | Only approved content goes live (the accuracy moat). |
 | 12.8 | **A/B testing of talk-tracks / cards** | Future | 🟢 | Learn which phrasing converts. |
@@ -459,8 +467,8 @@ The features that decide whether this is "valuable" or "a distracting toy."
 
 ### MVP (0–3 months) — deliver the "magic moment" for a paid pilot
 Desktop app (mac/Win) with mic + system-audio capture and two-stream split ·
-streaming STT (<400 ms) with rep/prospect labeling · objection / question /
-competitor / pricing detection with throttling · doc upload + battlecard/objection
+streaming STT (<400 ms) with rep/prospect labeling · **manual "Suggest" button**
+trigger (last-N-min window → light-LLM query builder; no auto-detection) · doc upload + battlecard/objection
 authoring · embedding + semantic retrieval · **cited, source-only** short
 suggestion cards (objection / Q&A / pricing / **do-not-say** / discovery / stall
 lines) at 2–4 s · always-on-top glanceable overlay with hotkeys, manual ask,

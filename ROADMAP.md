@@ -65,17 +65,18 @@ is the first measurable quality gate.
 
 ---
 
-## Stage 3 — Intent & Objection Detection (the trigger)
-*Why now: decides WHEN to surface a card; depends on transcript.*
+## Stage 3 — Suggestion Trigger (the "Suggest" button)
+*Why now: the rep decides WHEN to ask; depends on transcript. Automatic detection removed.*
 
-- [ ] **3.1** Objection detection — `3.1`
-- [ ] **3.2** Buyer-question detection — `3.2`
-- [ ] **3.3** Competitor-mention detection — `3.3`
-- [ ] **3.4** Pricing / discount-request detection — `3.4`
-- [ ] **3.5** Suggestion-throttling / relevance gating — `3.11`
+- [ ] **3.1** Suggest-button trigger (inbound WS click; the only trigger) — `3.1`
+- [ ] **3.2** Last-N-minutes transcript window capture (configurable) — `3.2`
+- [ ] **3.3** Light-LLM query builder (window → clean search query) — `3.3`
+- [ ] **3.4** `SuggestRequest → BuiltQuery` contract handed to retrieval — `3.4`
+- [ ] **3.5** Button rate-limit / in-flight guard — `3.11`
 
-**Expectation:** the system correctly flags the four core "moments" and suppresses
-noise. Measure precision/recall on recorded calls.
+**Expectation:** a Suggest click reliably produces a clean, relevant query from the
+recent transcript, with double-clicks guarded. There is no auto-detection to tune.
+Measure query quality on recorded calls. (Retrieval = Stage 5, the answer = Stage 6.)
 
 ---
 
@@ -92,16 +93,16 @@ search.
 ---
 
 ## Stage 5 — Retrieval & Grounding (the lookup)
-*Why now: turns a detected moment + KB into the right snippet.*
+*Why now: turns the Suggest-built query + KB into the right snippet.*
 
 - [ ] **5.1** Vector / semantic search over the KB — `5.1`
-- [ ] **5.2** Conversation-aware query construction — `5.3`
+- [ ] **5.2** Query refinement / expansion (query already built by Stage 3) — `5.3`
 - [ ] **5.3** Retrieval confidence scoring — `5.6`
 - [ ] **5.4** Mandatory source citation on every answer — `5.4`
 - [ ] **5.5** "Answer only from approved docs" mode (refuse if no source) — `5.5`
 
-**Expectation:** given the buyer's words, the system returns the best approved snippet
-with a citation — or honestly returns nothing. This is the anti-hallucination core.
+**Expectation:** given the Suggest-built query, the system returns the best approved
+snippet with a citation — or honestly returns nothing. This is the anti-hallucination core.
 
 ---
 
@@ -117,7 +118,7 @@ with a citation — or honestly returns nothing. This is the anti-hallucination 
 - [ ] **6.7** Hallucination guardrail: refuse / hedge when unsupported — `6.12`
 - [ ] **6.8** End-to-end 2–4 s suggestion latency — `6.8`
 
-**Expectation:** a detected objection produces a short, cited, trustworthy card in
+**Expectation:** a Suggest click produces a short, cited, trustworthy card in
 2–4 seconds. **This is the "magic moment."**
 
 ---
@@ -158,16 +159,17 @@ skip or reorder this ahead of live customer use.
 *Why now: turns a generic copilot into a sales copilot — the killer features.*
 
 - [ ] **9.1** Real-time objection-handling cards (killer #1) — `8.1`
-- [ ] **9.2** Live competitor battlecards (killer #2) — `8.2`
-- [ ] **9.3** "Do-not-say" guardrail warnings (killer #3) — `6.5` / `8.3`
-- [ ] **9.4** Risk / red-flag detection (powers do-not-say) — `3.6`
+- [ ] **9.2** Competitor battlecards — pulled via Suggest (killer #2) — `8.2`
+- [ ] **9.3** "Do-not-say" guardrail on generated cards (killer #3) — `6.5` / `8.3`
+- [ ] **9.4** Do-not-say rule match on the copilot's output (Guardrail Service) — `3.6`
 - [ ] **9.5** Product Q&A answers (cited) — `8.4`
 - [ ] **9.6** Pricing / packaging guidance — `8.5`
 - [ ] **9.7** Discovery-question prompts — `8.6`
 - [ ] **9.8** Stall-line suggestions — `6.7`
 
-**Expectation:** the three headline features work live: objection cards, competitor
-battlecards, and do-not-say guardrails — all cited.
+**Expectation:** the three headline features work: objection cards and competitor
+battlecards pulled via the Suggest button, and the do-not-say guardrail vetting every
+generated card — all cited.
 
 ---
 
@@ -222,17 +224,21 @@ what the KB couldn't answer.
 
 ---
 
-## Stage 14 — Transcription & Detection Depth
+## Stage 14 — Transcription Depth
 *Why now: real-world calls expose accuracy gaps to fix before scaling.*
 
 - [ ] **14.1** Custom vocabulary / keyterm prompting — `2.6`
 - [ ] **14.2** Multi-accent / noisy-line robustness — `2.7`
 - [ ] **14.3** Noise suppression / echo handling on capture — `1.7`
 - [ ] **14.4** Audio buffering & reconnection — `1.11`
-- [ ] **14.5** Buying-signal detection — `3.5`
-- [ ] **14.6** Discovery-gap detection — `3.7`
-- [ ] **14.7** Configurable trigger phrases / trackers — `3.10`
+- [ ] **14.5** Buying-signal surfacing — **post-call only** (coaching/CRM, Stage 21) — `3.5`
+- [ ] **14.6** Discovery-gap surfacing — **post-call only** (coaching, Stage 21) — `3.7`
 - [ ] **14.8** Live scrolling transcript view (optional panel) — `2.11`
+
+> **No auto-detection, ever.** The Suggest button (Stage 3) is the only live trigger.
+> Signals that once implied live detection (buying-signal, discovery-gap, sentiment,
+> talk-ratio) are **post-call analysis** — never a live listener. `3.10` configurable
+> trigger phrases is dropped (it only existed to auto-fire).
 
 ---
 
@@ -285,7 +291,7 @@ what the KB couldn't answer.
 - [ ] **18.7** Hybrid base + usage pricing option — `16.10`
 - [ ] **18.8** Plan upgrade/downgrade & self-serve checkout — `16.12`
 - [ ] **18.9** Shared vs. private playbooks — `12.9`
-- [ ] **18.10** Trigger/tracker configuration (admin) — `12.5`
+- [ ] ~~**18.10** Trigger/tracker configuration (admin) — `12.5`~~ *(dropped — no auto-fire; the rep triggers via Suggest)*
 - [ ] **18.11** Methodology configuration — `12.10`
 
 ---
@@ -451,7 +457,7 @@ review after every call, plus an improvement plan and strengths — tracked over
 ```
 0 Foundations
         │
-1 Capture ─► 2 Transcription ─► 3 Detection ─► 4 Knowledge ─► 5 Retrieval ─► 6 Generation ─► 7 Overlay
+1 Capture ─► 2 Transcription ─► 3 Trigger (Suggest) ─► 4 Knowledge ─► 5 Retrieval ─► 6 Generation ─► 7 Overlay
                                                                                                   │
                                                             8 Compliance (GATE: real calls) ◄─────┘
                                                                                                   │
@@ -475,5 +481,5 @@ review after every call, plus an improvement plan and strengths — tracked over
 1. **Stage 8 (Compliance) before any real prospect call.**
 2. **Stage 21 consent + registry (21.1–21.4) before any employee scoring (21.5+).**
 
-Everything else follows the dependency chain above: capture → text → detect →
+Everything else follows the dependency chain above: capture → text → trigger (Suggest) →
 knowledge → retrieve → generate → display, then breadth.

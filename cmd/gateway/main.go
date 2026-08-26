@@ -10,6 +10,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/VanshNarang12/sales-agent/internal/detect"
 	"github.com/VanshNarang12/sales-agent/internal/gateway"
 	"github.com/VanshNarang12/sales-agent/internal/platform/config"
 	"github.com/VanshNarang12/sales-agent/internal/platform/secrets"
@@ -58,10 +59,11 @@ func run(log *slog.Logger) error {
 	}()
 
 	sttMgr := buildSTT(ctx, cfg, log)
+	detectEng := buildDetect(log)
 
 	srv := &http.Server{
 		Addr:              cfg.HTTPAddr,
-		Handler:           gateway.New(cfg, signingKey, sttMgr, log).Handler(),
+		Handler:           gateway.New(cfg, signingKey, sttMgr, detectEng, log).Handler(),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
@@ -78,6 +80,9 @@ func run(log *slog.Logger) error {
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	return srv.Shutdown(shutdownCtx)
+}
+func buildDetect(log *slog.Logger) *detect.Engine {
+	return detect.NewEngine(log, nil)
 }
 
 func buildSTT(ctx context.Context, cfg *config.Config, log *slog.Logger) *stt.Manager {

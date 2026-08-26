@@ -1,6 +1,7 @@
 package gateway
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -14,6 +15,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
 
+	"github.com/VanshNarang12/sales-agent/internal/detect"
 	"github.com/VanshNarang12/sales-agent/internal/platform/tenancy"
 	"github.com/VanshNarang12/sales-agent/internal/stt"
 )
@@ -65,6 +67,7 @@ type session struct {
 	lastSeq  [2]uint16
 	seqSeen  [2]bool
 	stt      *stt.Session
+	detect   *detect.Session
 	writeMu  sync.Mutex
 }
 
@@ -87,7 +90,12 @@ func (s *Server) handleRealtime(w http.ResponseWriter, r *http.Request) {
 
 	if s.stt != nil {
 		sessionID := newSessionID()
-		sess.stt = s.stt.StartSession(r.Context(), string(tid), sessionID, s.transcriptSink(conn, sess))
+		sink := s.transcriptSink(conn, sess)
+		if s.detect != nil {
+			sess.detect = s.detect.StartSession(r.Context(), string(tid), sessionID, s.querySink())
+			sink = composeSinks(sink, sess.detect.OnTranscript)
+		}
+		sess.stt = s.stt.StartSession(r.Context(), string(tid), sessionID, sink)
 		defer sess.stt.Close() // runs before conn.Close() (LIFO): supervisors stop writing first
 		s.log.Info("transcription session started", "tenant", string(tid), "session", sessionID)
 	}
@@ -100,7 +108,7 @@ func (s *Server) handleRealtime(w http.ResponseWriter, r *http.Request) {
 		}
 		switch mt {
 		case websocket.TextMessage:
-			if !s.handleHello(conn, sess, msg) {
+			if !s.handleText(r.Context(), conn, sess, msg) {
 				return
 			}
 		case websocket.BinaryMessage:
@@ -109,6 +117,33 @@ func (s *Server) handleRealtime(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+}
+
+type controlMsg struct {
+	Type string `json:"type"`
+}
+
+type suggestMsg struct {
+	Type       string `json:"type"` // "suggest"
+	LookbackMs int64  `json:"lookbackMs"`
+}
+
+// handleText dispatches an inbound WS text message: the Suggest click (Stage 3) or the hello handshake.
+func (s *Server) handleText(ctx context.Context, conn *websocket.Conn, sess *session, msg []byte) bool {
+	var c controlMsg
+	if err := json.Unmarshal(msg, &c); err != nil {
+		s.closeWS(conn, sess, wsProtocolError, "malformed control message")
+		return false
+	}
+	if c.Type == "suggest" {
+		if sess.detect != nil {
+			var m suggestMsg
+			_ = json.Unmarshal(msg, &m)
+			go sess.detect.Suggest(ctx, m.LookbackMs) // runs off the read loop: it calls the query-builder LLM
+		}
+		return true
+	}
+	return s.handleHello(conn, sess, msg)
 }
 
 func (s *Server) handleHello(conn *websocket.Conn, sess *session, msg []byte) bool {
@@ -154,6 +189,20 @@ func (s *Server) handleAudio(conn *websocket.Conn, sess *session, msg []byte) bo
 		sess.stt.Write(channel, pcm)
 	}
 	return true
+}
+
+func composeSinks(sinks ...stt.EventFunc) stt.EventFunc {
+	return func(ev stt.TranscriptEvent) {
+		for _, s := range sinks {
+			s(ev)
+		}
+	}
+}
+
+func (s *Server) querySink() detect.EmitFunc {
+	return func(q detect.BuiltQuery) {
+		fmt.Printf("[suggest] session=%s query=%q\n", q.SessionID, q.Query)
+	}
 }
 
 func (s *Server) transcriptSink(conn *websocket.Conn, sess *session) stt.EventFunc {

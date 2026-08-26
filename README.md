@@ -1,10 +1,11 @@
 # Sales Copilot — Real-Time AI Sales-Call Assistant
 
 A real-time, **source-backed sales copilot** for B2B sales teams. It listens during
-live Zoom / Google Meet / Microsoft Teams calls, transcribes the conversation,
-detects objections and buyer questions, searches the company's approved knowledge
-base, and surfaces short, cited coaching suggestions to the rep **in the moment** —
-all with consent and compliance built in.
+live Zoom / Google Meet / Microsoft Teams calls and transcribes the conversation. When
+the rep clicks **Suggest**, it reads the last minute or two of the call, searches the
+company's approved knowledge base, and surfaces a short, cited coaching suggestion **in
+the moment** — all with consent and compliance built in. (The rep triggers help with
+one click; there's no covert auto-listening deciding when to interrupt.)
 
 > **Positioning:** _"Your sales playbook, battlecards, case studies, and product
 > docs — live in the call, exactly when the buyer asks."_
@@ -37,11 +38,14 @@ and case studies — with citations.
 
 ## The three killer features
 
-1. **Real-time objection-handling cards** — detect the objection, surface the
-   approved, cited rebuttal.
-2. **Live competitor battlecards** — appear the moment a competitor is mentioned.
-3. **"Do-not-say" guardrails** — warn before reps over-promise on pricing, legal,
-   security, or implementation.
+1. **Real-time objection-handling cards** — the rep clicks **Suggest** on an objection
+   and gets the approved, cited rebuttal.
+2. **Live competitor battlecards** — click **Suggest** after a competitor comes up and
+   pull the battlecard for that competitor.
+3. **"Do-not-say" guardrails** — every suggestion the copilot produces is vetted before
+   it's shown, so it never tells a rep to over-promise on pricing, legal, security, or
+   implementation. (A guardrail on *our own answers* — not a listener on the rep's
+   speech. There is no auto-detection anywhere.)
 
 Plus a **per-employee performance & coaching engine**: register every rep, and
 after **every call** they get a scored "what you did well / what you did poorly"
@@ -82,5 +86,5 @@ team (transparent and consent-based, not covert monitoring). See §13A in
 
 ## Success metric (the bar the MVP must clear)
 
-> When a prospect raises an objection, can the tool show the rep a **useful,
-> accurate, short, source-backed** suggestion within **2–4 seconds**?
+> When a prospect raises an objection and the rep clicks **Suggest**, can the tool show
+> a **useful, accurate, short, source-backed** suggestion within **2–4 seconds**?

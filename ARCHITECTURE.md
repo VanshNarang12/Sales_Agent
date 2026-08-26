@@ -74,7 +74,7 @@ decompose where there is a real scaling, latency, language, or team boundary.
 ├──────────────────────────────────────────────────────────────────────┤
 │  REAL-TIME PLANE  (the hot path — latency is king, keep hops minimal)  │
 │  Realtime Gateway · Call Session Orchestrator · STT Adapter ·          │
-│  Detection · Retrieval · Suggestion/Generation · Guardrail             │
+│  Suggestion Trigger · Retrieval · Suggestion/Generation · Guardrail    │
 ├──────────────────────────────────────────────────────────────────────┤
 │  ASYNC / DATA PLANE  (event-driven, throughput over latency)           │
 │  Post-Call Processor · Coaching/Scoring (§13A) · Notification ·        │
@@ -130,7 +130,7 @@ flowchart TB
     subgraph RT["Real-Time Plane (Go, gRPC)"]
         ORCH[Call Session Orchestrator]
         STT[STT Adapter\n→ Deepgram/AssemblyAI]
-        DET[Detection Service]
+        DET[Suggestion Trigger\nbutton → query builder]
         RET[Retrieval Service\nRAG]
         GEN[Suggestion/Generation\nLLM orchestration]
         GRD[Guardrail Service]
@@ -199,9 +199,9 @@ flowchart TB
 | Service | Responsibility | Scaling axis | Key deps |
 | --- | --- | --- | --- |
 | **Realtime Gateway** | Terminate client WebSocket, authn the session, enforce consent gate, session affinity, backpressure | concurrent calls | Auth, Consent |
-| **Call Session Orchestrator** | The conductor of one live call: owns session state, fans audio to STT, drives detect→retrieve→generate→guardrail, pushes cards to client, emits events | concurrent calls | all RT services |
+| **Call Session Orchestrator** | The conductor of one live call: owns session state, fans audio to STT, on a **Suggest** click drives trigger→retrieve→generate→guardrail, pushes cards to client, emits events | concurrent calls | all RT services |
 | **STT Adapter** | Provider-agnostic streaming STT (Deepgram/AssemblyAI/Gladia/ElevenLabs), keyterm boosting, two-stream diarization passthrough | call-minutes | external STT |
-| **Detection Service** | Objection / question / competitor / pricing / risk / discovery-gap / buying-signal classification on the transcript stream | transcript throughput | rules/trackers + LLM (Haiku) call |
+| **Suggestion Trigger** | On a manual **Suggest** click: snapshot the last-N-min transcript window + a **light LLM** that builds a clean retrieval query. No automatic detection. | clicks per call | light LLM (Haiku) call |
 | **Retrieval Service** | Conversation-aware query build → hybrid search over tenant KB → rerank → confidence score; returns cited snippets or nothing | query rate | pgvector/Qdrant, Redis, embeddings API |
 | **Suggestion/Generation** | LLM orchestration: build grounded prompt (snippet + context), generate short card, stream tokens, cite sources | LLM calls | Anthropic Claude (API) |
 | **Guardrail Service** | Groundedness check, "do-not-say" rule match, confidence gate, PII/sensitive filter before display | per-suggestion | rules + cheap LLM check |
@@ -213,7 +213,7 @@ All Go.
 | --- | --- |
 | **Auth/Identity** | Sign-up, OAuth, sessions, SSO/SAML/OIDC (V2), RBAC |
 | **Tenant/Org** | Orgs, teams, seats, roles, employee registry (§13A) |
-| **Admin/Playbook** | Objection→response, battlecards, do-not-say rules, triggers, methodology config, approval workflow |
+| **Admin/Playbook** | Objection→response, battlecards, do-not-say rules, methodology config, approval workflow |
 | **Knowledge/Ingestion** | Upload/connectors (Drive/Notion/URL), parse, chunk, embed (via embeddings API), version, index per tenant |
 | **Billing/Metering** | Usage metering (minutes), plans, Stripe, fair-use/overage, seat mgmt |
 | **CRM Integration** | HubSpot/Salesforce OAuth, field mapping, post-call write-back, context pull |
@@ -241,7 +241,7 @@ sequenceDiagram
     participant G as Realtime Gateway
     participant O as Orchestrator
     participant S as STT Adapter
-    participant D as Detection
+    participant D as Suggestion Trigger
     participant R as Retrieval
     participant L as Generation (LLM)
     participant Gd as Guardrail
@@ -250,9 +250,12 @@ sequenceDiagram
     G->>O: authenticated session stream
     O->>S: stream audio
     S-->>O: partial + final transcript (<400ms)
-    O->>D: transcript window
-    D-->>O: "objection: pricing" + span
-    O->>R: query(context, objection)
+    Note over O: buffered into rolling transcript window
+    C->>G: WS: {"type":"suggest"} (rep clicks Suggest)
+    G->>O: suggest click
+    O->>D: last-N-min transcript window
+    D-->>O: BuiltQuery (light LLM: window → query)
+    O->>R: retrieve(query)
     R-->>O: top snippet + citation + confidence
     O->>L: grounded prompt (cached system+KB)
     L-->>O: streamed card tokens
@@ -267,9 +270,9 @@ sequenceDiagram
 
 | Stage | Budget | Technique to hold it |
 | --- | --- | --- |
-| Audio frame → STT final for the turn | 300–400 ms | streaming STT, end-of-turn detection, low min-silence |
-| Detection | 50–150 ms | small/fast classifier + rule fast-path; runs on partials |
-| Retrieval (query build + search + rerank) | 150–400 ms | pre-embedded KB, ANN index, Redis cache of hot Q&A, cross-encoder rerank only on top-k |
+| Audio frame → STT final for the turn | 300–400 ms | streaming STT, low min-silence (buffered continuously into the window) |
+| Query build (Suggest click → BuiltQuery) | 150–400 ms | **light LLM (Claude Haiku)** over the last-N-min window; small prompt, capped output |
+| Retrieval (search + rerank) | 150–400 ms | pre-embedded KB, ANN index, Redis cache of hot Q&A, cross-encoder rerank only on top-k |
 | Generation (first useful token → full card) | 600–1500 ms | **fast model (Claude Haiku)**, **prompt caching** of system + KB context, **streaming** render, capped output tokens |
 | Guardrail | 30–100 ms | rule match + cheap groundedness check; parallelize with first-token stream |
 | Transport + render | 50–150 ms | persistent WS, pre-warmed overlay, render first bullet on first token |
@@ -278,8 +281,9 @@ sequenceDiagram
 **Hot-path rules:**
 - The orchestrator and RT services live in the **same cluster + AZ**; calls are gRPC,
   not HTTP/JSON.
-- Detection runs on **partial** transcripts so retrieval can pre-warm before the
-  prospect finishes the sentence.
+- The transcript is **buffered continuously** so a **Suggest** click finds the window
+  ready; the latency clock starts at the click, not at audio. The rep clicks when the
+  question is asked, so there is no end-of-turn guessing.
 - Generation **streams**; the overlay shows bullet 1 while bullet 2 is still
   generating (perceived latency ≈ time-to-first-token).
 - **Prompt caching**: the tenant's system prompt + frequently used KB context are
@@ -334,21 +338,29 @@ evaluable and swappable.
   system loopback) — cheaper and more reliable than ML diarization; ML diarization
   is the fallback for single-stream sources.
 - **Keyterm boosting** (`2.6`) feeds product/competitor names per tenant.
-- WebSocket streaming; partials drive detection, finals drive retrieval.
+- WebSocket streaming; every partial/final is buffered into the rolling transcript
+  window that the Suggest trigger snapshots.
 
-### 7.2 Detection
-- Hybrid: **fast rules/regex + keyword trackers** for high-precision triggers
-  (competitor names, "too expensive") and a **small fine-tuned classifier**
-  (DistilBERT-class or a small Claude Haiku call) for fuzzy objections/intents.
-- Runs on a sliding transcript window; emits typed events with confidence + span.
-- Throttling/relevance gating (`3.11`) prevents over-firing.
+### 7.2 Suggestion Trigger (the "Suggest" button)
+- **Manual trigger — no automatic detection.** The rep clicks **Suggest** in the
+  overlay; nothing surfaces otherwise. This removes the flappy "when did the question
+  end / is this an objection" problem — the human decides the moment.
+- On a click: snapshot the **last N minutes** of transcript (configurable) from the
+  rolling per-session buffer, then a **light LLM** (small Claude Haiku call) distills
+  that noisy window into a clean **retrieval query** (`BuiltQuery`).
+- The only "gating" is a per-session **in-flight guard + min-interval** (`3.11`) so a
+  double-click doesn't fire two turns.
+- **No proactive/auto layer — permanently.** There is no listener that surfaces on its
+  own; the button is the only live trigger. Signals that would need live detection
+  (buying-signal, discovery-gap, sentiment, talk-ratio) are **post-call** analysis, not
+  in the hot path.
 
 ### 7.3 Retrieval (RAG)
 - **Per-tenant index.** Ingested docs are chunked, embedded, and stored in
   **pgvector** (MVP) → **Qdrant** (scale). Hybrid search = vector + BM25/keyword
   (`5.2`) with a **cross-encoder reranker** on the top-k (`5.7`).
-- **Query** is built from the buyer's recent words + detected intent + deal context
-  (`5.3`), not a typed prompt.
+- **Query** comes from the Stage-3 light-LLM query builder (`BuiltQuery`); Stage 5 may
+  refine/expand it (`5.3`), but it is not a typed prompt and not the raw transcript.
 - **Confidence scoring** (`5.6`) and **"answer only from approved docs"** (`5.5`):
   below threshold → return nothing rather than hallucinate.
 - **Citations** are first-class: every returned chunk carries `doc_id`, version,
@@ -440,7 +452,7 @@ flowchart TB
 ### 9.3 Core entities (simplified)
 ```
 Org 1─* Team 1─* Employee/User      Org 1─* KnowledgeDoc 1─* Chunk(+embedding)
-Org 1─* Playbook 1─* {ObjectionRule, Battlecard, DoNotSayRule, Trigger}
+Org 1─* Playbook 1─* {ObjectionRule, Battlecard, DoNotSayRule}
 Call ─1 Org, ─1 Employee(rep)  ─* SuggestionEvent ─* Feedback
 Call ─1 ConsentRecord          ─0..1 Recording/Transcript(consent-gated)
 Call ─0..1 PostCallSummary     ─0..1 CoachingScorecard ─* DimensionScore(+evidence)
@@ -567,7 +579,7 @@ Compliance is enforced **in the architecture**, not as policy docs:
   stage** (§5.2) are first-class dashboards; cost-per-call; STT/LLM error rates;
   cache hit rates; queue depths.
 - **Tracing (OpenTelemetry):** a trace per suggestion spans gateway→orchestrator→
-  STT→detect→retrieve→generate→guardrail→render, so we can see exactly where a slow
+  STT→trigger→retrieve→generate→guardrail→render, so we can see exactly where a slow
   card lost its budget.
 - **Logging:** structured, tenant-tagged, PII-scrubbed; centralized.
 - **AI quality telemetry:** groundedness scores, suggestion-usefulness from feedback
@@ -598,7 +610,7 @@ Compliance is enforced **in the architecture**, not as policy docs:
 
 ```
 Internet ─► CDN/WAF ─► API Gateway/LB
-                         ├─► Realtime Gateway pool ─► [RT node pool: orchestrator, STT, detect, retrieve, gen, guardrail]
+                         ├─► Realtime Gateway pool ─► [RT node pool: orchestrator, STT, trigger, retrieve, gen, guardrail]
                          └─► Control-plane pool (auth, admin, kb, billing, crm, analytics, consent)
 [Async node pool: post-call, coaching, notification, eval]  ◄── Event bus
 Data: RDS Postgres(+pgvector) · Qdrant · ElastiCache Redis · S3 · ClickHouse · NATS/MSK
@@ -659,7 +671,7 @@ Data: RDS Postgres(+pgvector) · Qdrant · ElastiCache Redis · S3 · ClickHouse
 | Vector DB | Buy/OSS (pgvector→Qdrant) | don't build a vector engine |
 | Auth/SSO | OSS/managed (e.g. Ory/Auth0 for SSO) | commodity; focus elsewhere |
 | Billing | **Buy** (Stripe) | commodity |
-| **RAG quality, grounding, guardrails, sales-specific detection, overlay UX, coaching engine** | **Build** | **this is the product and the moat** |
+| **RAG quality, grounding, guardrails, sales-specific query-building, overlay UX, coaching engine** | **Build** | **this is the product and the moat** |
 
 ---
 

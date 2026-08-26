@@ -223,7 +223,7 @@ The MVP should be narrower than your original idea.
 | **Real-time transcription** | Foundation of everything. Needs speaker separation. |
 | **Company-doc knowledge base** | Upload pitch decks, pricing sheets, FAQs, docs, case studies, competitor battlecards. |
 | **Source-backed answers** | Every answer should cite the internal source document. This reduces hallucination risk. |
-| **Objection detection** | Detect “too expensive,” “not now,” “send info,” “competitor,” “need approval,” etc. |
+| **"Suggest" button** | The rep clicks Suggest on an objection/question ("too expensive," "not now," "competitor," "need approval," etc.); we read the last 1–2 min of transcript and answer. Manual trigger — no auto-detection guessing when to fire. |
 | **Short suggestion cards** | Reps cannot read long paragraphs mid-call. Give 1–3 bullets. |
 | **“What to say now” and “what not to say”** | The “do not say” feature is very valuable for legal/pricing/security promises. |
 | **Stall lines** | Example: “That’s a fair question — let me make sure I give you the precise answer.” |
