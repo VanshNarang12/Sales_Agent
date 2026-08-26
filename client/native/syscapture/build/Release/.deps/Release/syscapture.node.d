@@ -1,1 +1,0 @@
-cmd_Release/syscapture.node := c++ -bundle -framework CoreAudio -framework AudioToolbox -framework Foundation -undefined dynamic_lookup -Wl,-search_paths_first -mmacosx-version-min=14.4 -arch arm64 -L./Release -stdlib=libc++  -o Release/syscapture.node Release/obj.target/syscapture/src/addon.o 
