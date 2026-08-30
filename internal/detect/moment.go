@@ -7,11 +7,6 @@ import "github.com/VanshNarang12/sales-agent/internal/stt"
 
 type Speaker = stt.Speaker
 
-// Source names the path that built the query (fixed in code, not config).
-type Source string
-
-const SourceModel Source = "model"
-
 // SuggestRequest is one Suggest-button click for a session (D1).
 type SuggestRequest struct {
 	TenantID   string
@@ -24,12 +19,9 @@ type BuiltQuery struct {
 	TenantID  string
 	SessionID string
 
-	Query      string // the clean search query the light LLM produced (D2)
-	WindowText string // the transcript window it was built from
-	StartMs    int64
-	EndMs      int64
-
-	Source Source
+	Query   string // the raw last-N-min transcript window
+	StartMs int64
+	EndMs   int64
 }
 
 // EmitFunc hands a built query to its consumer; invoked from the engine goroutine and must not block.

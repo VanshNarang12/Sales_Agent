@@ -7,23 +7,31 @@ import (
 	"sync"
 
 	"github.com/VanshNarang12/sales-agent/internal/stt"
+	"github.com/VanshNarang12/sales-agent/internal/transcript"
 )
-const defaultLookbackMs = 90_000
-const maxBufEntries = 400
-type QueryBuilder interface {
-	Build(ctx context.Context, window string) (string, error)
-}
-type Engine struct {
-	log     *slog.Logger
-	builder QueryBuilder
+
+// TranscriptStore is the live-transcript backend (Redis in prod, a fake in tests).
+type TranscriptStore interface {
+	Append(ctx context.Context, tenantID, sessionID string, e transcript.Entry) error
+	Window(ctx context.Context, tenantID, sessionID string, lookbackMs int64) ([]transcript.Entry, error)
 }
 
-func NewEngine(log *slog.Logger, builder QueryBuilder) *Engine {
+type Engine struct {
+	log        *slog.Logger
+	store      TranscriptStore
+	lookbackMs int64
+}
+
+func NewEngine(log *slog.Logger, store TranscriptStore, defaultLookbackMs int64) *Engine {
 	if log == nil {
 		log = slog.Default()
 	}
-	return &Engine{log: log, builder: builder}
+	if defaultLookbackMs <= 0 {
+		defaultLookbackMs = 90_000
+	}
+	return &Engine{log: log, store: store, lookbackMs: defaultLookbackMs}
 }
+
 func (e *Engine) StartSession(ctx context.Context, tenantID, sessionID string, emit EmitFunc) *Session {
 	return &Session{
 		eng:       e,
@@ -34,13 +42,6 @@ func (e *Engine) StartSession(ctx context.Context, tenantID, sessionID string, e
 	}
 }
 
-type entry struct {
-	speaker Speaker
-	text    string
-	startMs int64
-	endMs   int64
-}
-
 type Session struct {
 	eng       *Engine
 	ctx       context.Context
@@ -49,25 +50,23 @@ type Session struct {
 	emit      EmitFunc
 
 	mu       sync.Mutex
-	buf      []entry
 	inFlight bool
 }
 
+// OnTranscript write-throughs each final utterance; a failed append is dropped, not fatal.
 func (s *Session) OnTranscript(ev stt.TranscriptEvent) {
 	if !ev.IsFinal || ev.Text == "" {
 		return
 	}
-	s.mu.Lock()
-	s.buf = append(s.buf, entry{speaker: ev.Speaker, text: ev.Text, startMs: ev.StartMs, endMs: ev.EndMs})
-	if len(s.buf) > maxBufEntries {
-		s.buf = s.buf[len(s.buf)-maxBufEntries:]
+	e := transcript.Entry{Speaker: string(ev.Speaker), Text: ev.Text, StartMs: ev.StartMs, EndMs: ev.EndMs}
+	if err := s.eng.store.Append(s.ctx, s.tenantID, s.sessionID, e); err != nil {
+		s.eng.log.Warn("transcript append failed", "err", err, "session", s.sessionID)
 	}
-	s.mu.Unlock()
 }
 
 func (s *Session) Suggest(ctx context.Context, lookbackMs int64) {
 	if lookbackMs <= 0 {
-		lookbackMs = defaultLookbackMs
+		lookbackMs = s.eng.lookbackMs
 	}
 
 	s.mu.Lock()
@@ -76,7 +75,6 @@ func (s *Session) Suggest(ctx context.Context, lookbackMs int64) {
 		s.eng.log.Info("suggest dropped", "reason", "in_flight", "session", s.sessionID)
 		return
 	}
-	win, startMs, endMs := snapshot(s.buf, lookbackMs)
 	s.inFlight = true
 	s.mu.Unlock()
 
@@ -86,52 +84,45 @@ func (s *Session) Suggest(ctx context.Context, lookbackMs int64) {
 		s.mu.Unlock()
 	}()
 
+	entries, err := s.eng.store.Window(ctx, s.tenantID, s.sessionID, lookbackMs)
+	if err != nil {
+		s.eng.log.Warn("transcript window failed", "err", err, "session", s.sessionID)
+		return
+	}
+	win, startMs, endMs := joinWindow(entries)
 	if win == "" {
 		return
 	}
 
-	query := win
-	if s.eng.builder != nil {
-		q, err := s.eng.builder.Build(ctx, win)
-		if err != nil {
-			s.eng.log.Warn("query builder failed", "err", err, "session", s.sessionID)
-			return
-		}
-		query = q
-	}
-
 	s.emit(BuiltQuery{
-		TenantID:   s.tenantID,
-		SessionID:  s.sessionID,
-		Query:      query,
-		WindowText: win,
-		StartMs:    startMs,
-		EndMs:      endMs,
-		Source:     SourceModel,
+		TenantID:  s.tenantID,
+		SessionID: s.sessionID,
+		Query:     win,
+		StartMs:   startMs,
+		EndMs:     endMs,
 	})
 }
-func snapshot(buf []entry, lookbackMs int64) (text string, startMs, endMs int64) {
-	if len(buf) == 0 {
+
+// joinWindow renders store entries as "speaker: text" lines and returns the span.
+func joinWindow(entries []transcript.Entry) (text string, startMs, endMs int64) {
+	if len(entries) == 0 {
 		return "", 0, 0
 	}
-	latest := buf[len(buf)-1].endMs
-	cutoff := latest - lookbackMs
-
 	var b strings.Builder
-	startMs = latest
-	for _, e := range buf {
-		if e.endMs < cutoff {
-			continue
-		}
+	startMs = entries[0].StartMs
+	for _, e := range entries {
 		if b.Len() > 0 {
 			b.WriteByte('\n')
 		}
-		b.WriteString(string(e.speaker))
+		b.WriteString(e.Speaker)
 		b.WriteString(": ")
-		b.WriteString(e.text)
-		if e.startMs < startMs {
-			startMs = e.startMs
+		b.WriteString(e.Text)
+		if e.StartMs < startMs {
+			startMs = e.StartMs
+		}
+		if e.EndMs > endMs {
+			endMs = e.EndMs
 		}
 	}
-	return strings.TrimSpace(b.String()), startMs, latest
+	return strings.TrimSpace(b.String()), startMs, endMs
 }

@@ -14,6 +14,7 @@ import (
 	"github.com/VanshNarang12/sales-agent/internal/platform/config"
 	"github.com/VanshNarang12/sales-agent/internal/platform/telemetry"
 	"github.com/VanshNarang12/sales-agent/internal/platform/tenancy"
+	"github.com/VanshNarang12/sales-agent/internal/retrieval"
 	"github.com/VanshNarang12/sales-agent/internal/stt"
 )
 
@@ -21,13 +22,14 @@ import (
 type Server struct {
 	cfg        *config.Config
 	signingKey string
-	stt *stt.Manager
-	detect *detect.Engine
-	log    *slog.Logger
+	stt     *stt.Manager
+	detect  *detect.Engine
+	extract *retrieval.Extractor
+	log     *slog.Logger
 }
 
-func New(cfg *config.Config, signingKey string, sttMgr *stt.Manager, detectEng *detect.Engine, log *slog.Logger) *Server {
-	return &Server{cfg: cfg, signingKey: signingKey, stt: sttMgr, detect: detectEng, log: log}
+func New(cfg *config.Config, signingKey string, sttMgr *stt.Manager, detectEng *detect.Engine, extractor *retrieval.Extractor, log *slog.Logger) *Server {
+	return &Server{cfg: cfg, signingKey: signingKey, stt: sttMgr, detect: detectEng, extract: extractor, log: log}
 }
 
 // Handler builds the HTTP/WS routes with telemetry and auth wired in.

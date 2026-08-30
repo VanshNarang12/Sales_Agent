@@ -53,12 +53,12 @@ a hard "stop listening" control and no audio persisted. Test on real Zoom/Meet c
 ## Stage 2 — Real-Time Transcription (the substrate)
 *Why now: text is what every detector and retriever reads.*
 
-- [ ] **2.1** Pluggable STT provider abstraction — `2.10`
-- [ ] **2.2** Streaming STT, partial + final transcripts — `2.1`
-- [ ] **2.3** Speaker labeling (rep vs. prospect, from the two-stream split) — `2.3`
-- [ ] **2.4** End-of-turn / end-of-speech detection — `2.4`
-- [ ] **2.5** Punctuation, casing & formatting — `2.5`
-- [ ] **2.6** Hit the <400 ms latency target — `2.2`
+- [x] **2.1** Pluggable STT provider abstraction — `2.10` (`internal/stt`, Deepgram adapter)
+- [x] **2.2** Streaming STT, partial + final transcripts — `2.1`
+- [x] **2.3** Speaker labeling (rep vs. prospect, from the two-stream split) — `2.3`
+- [x] **2.4** End-of-turn / end-of-speech detection — `2.4` (endpointing, `STT_ENDPOINTING_MS`)
+- [x] **2.5** Punctuation, casing & formatting — `2.5` (Deepgram smart-format)
+- [~] **2.6** Hit the <400 ms latency target — `2.2` (metric instrumented; p95 not yet verified on real calls)
 
 **Expectation:** a live, speaker-labeled transcript streaming in under 400 ms. This
 is the first measurable quality gate.
@@ -68,15 +68,16 @@ is the first measurable quality gate.
 ## Stage 3 — Suggestion Trigger (the "Suggest" button)
 *Why now: the rep decides WHEN to ask; depends on transcript. Automatic detection removed.*
 
-- [ ] **3.1** Suggest-button trigger (inbound WS click; the only trigger) — `3.1`
-- [ ] **3.2** Last-N-minutes transcript window capture (configurable) — `3.2`
-- [ ] **3.3** Light-LLM query builder (window → clean search query) — `3.3`
-- [ ] **3.4** `SuggestRequest → BuiltQuery` contract handed to retrieval — `3.4`
-- [ ] **3.5** Button rate-limit / in-flight guard — `3.11`
+- [x] **3.1** Suggest-button trigger (inbound WS click; the only trigger) — `3.1` (WS `{"type":"suggest"}` + desktop-client button)
+- [x] **3.2** Last-N-minutes transcript window capture (configurable) — `3.2` (Redis transcript store: complete call, sliding TTL, window read at click; `SUGGEST_LOOKBACK_MS`; see `transcript_store_techdoc.md`)
+- [ ] ~~**3.3** Light-LLM query builder (window → clean search query) — `3.3`~~ *(dropped — the raw window is the query)*
+- [x] **3.4** `SuggestRequest → BuiltQuery` contract handed to retrieval — `3.4` (consumer is a dev console sink until Stage 5)
+- [~] **3.5** Button rate-limit / in-flight guard — `3.11` (in-flight guard + client cooldown live; server min-interval pending)
 
-**Expectation:** a Suggest click reliably produces a clean, relevant query from the
-recent transcript, with double-clicks guarded. There is no auto-detection to tune.
-Measure query quality on recorded calls. (Retrieval = Stage 5, the answer = Stage 6.)
+**Expectation:** a Suggest click reliably captures the recent transcript window and
+hands it to retrieval as the query, with double-clicks guarded. There is no
+auto-detection to tune and no LLM in the trigger path. (Retrieval = Stage 5, the
+answer = Stage 6.)
 
 ---
 
@@ -96,7 +97,7 @@ search.
 *Why now: turns the Suggest-built query + KB into the right snippet.*
 
 - [ ] **5.1** Vector / semantic search over the KB — `5.1`
-- [ ] **5.2** Query refinement / expansion (query already built by Stage 3) — `5.3`
+- [~] **5.2** LLM query/objection extraction — **mandatory MVP step**: every Suggest window passes through a small LLM call that extracts "what is the prospect asking/objecting to" before embedding — `5.3` (extraction step + connector built 2026-08-27; wired to console until search exists)
 - [ ] **5.3** Retrieval confidence scoring — `5.6`
 - [ ] **5.4** Mandatory source citation on every answer — `5.4`
 - [ ] **5.5** "Answer only from approved docs" mode (refuse if no source) — `5.5`

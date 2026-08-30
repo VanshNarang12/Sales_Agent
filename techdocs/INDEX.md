@@ -64,6 +64,8 @@ Status: `planned` · `in-progress` · `done`.
 | [`audio_capture_techdoc.md`](./audio_capture_techdoc.md) | Stage 1 | `1.1`–`1.6`,`1.8`,`1.12` | §10 | in-progress |
 | [`transcription_techdoc.md`](./transcription_techdoc.md) | Stage 2 | `2.1`–`2.6`,`2.10` | §7.1 | done |
 | [`detection_techdoc.md`](./detection_techdoc.md) — *Suggestion Trigger* (manual "Suggest" button; auto-detection removed) | Stage 3 | `3.1`–`3.4`,`3.11` | §7.2 | in-progress |
+| [`transcript_store_techdoc.md`](./transcript_store_techdoc.md) — Redis live-transcript store (complete call, sliding TTL) | Stage 3 | `3.2` | §7.2 | done |
+| [`query_extraction_techdoc.md`](./query_extraction_techdoc.md) — LLM ask-extraction (retrieval step 1) + `llm.Completer` provider layer | Stage 5 (early) / 6.1 | `5.3`,`18.6` | §7.3 | in-progress |
 | _knowledge_base_techdoc.md_ | Stage 4 / 16 | `4.1`,`4.2`,`4.5` + ingestion | §7.3,§9 | planned |
 | _rag_retrieval_techdoc.md_ | Stage 5 | `5.1`,`5.3`–`5.6` | §7.3 | planned |
 | _suggestion_generation_techdoc.md_ | Stage 6 | `6.1`–`6.4`,`6.8`,`6.12`,`18.6`,`18.9` | §7.4 | planned |

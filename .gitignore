@@ -29,11 +29,5 @@ profile.out
 # Go
 /vendor/
 
-# Client (Electron) build artifacts
-/client/node_modules/
-/client/dist/
-/client/out/
-/client/.vite/
-
 # Claude Code — keep shared skills, ignore local-only config
 .claude/settings.local.json

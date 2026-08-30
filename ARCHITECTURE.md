@@ -130,7 +130,7 @@ flowchart TB
     subgraph RT["Real-Time Plane (Go, gRPC)"]
         ORCH[Call Session Orchestrator]
         STT[STT Adapter\n→ Deepgram/AssemblyAI]
-        DET[Suggestion Trigger\nbutton → query builder]
+        DET[Suggestion Trigger\nbutton → transcript window]
         RET[Retrieval Service\nRAG]
         GEN[Suggestion/Generation\nLLM orchestration]
         GRD[Guardrail Service]
@@ -201,7 +201,7 @@ flowchart TB
 | **Realtime Gateway** | Terminate client WebSocket, authn the session, enforce consent gate, session affinity, backpressure | concurrent calls | Auth, Consent |
 | **Call Session Orchestrator** | The conductor of one live call: owns session state, fans audio to STT, on a **Suggest** click drives trigger→retrieve→generate→guardrail, pushes cards to client, emits events | concurrent calls | all RT services |
 | **STT Adapter** | Provider-agnostic streaming STT (Deepgram/AssemblyAI/Gladia/ElevenLabs), keyterm boosting, two-stream diarization passthrough | call-minutes | external STT |
-| **Suggestion Trigger** | On a manual **Suggest** click: snapshot the last-N-min transcript window + a **light LLM** that builds a clean retrieval query. No automatic detection. | clicks per call | light LLM (Haiku) call |
+| **Suggestion Trigger** | On a manual **Suggest** click: read the last-N-min transcript window from the Redis store and emit it as the retrieval query (`BuiltQuery`). No LLM, no automatic detection. | clicks per call | Redis (transcript store) |
 | **Retrieval Service** | Conversation-aware query build → hybrid search over tenant KB → rerank → confidence score; returns cited snippets or nothing | query rate | pgvector/Qdrant, Redis, embeddings API |
 | **Suggestion/Generation** | LLM orchestration: build grounded prompt (snippet + context), generate short card, stream tokens, cite sources | LLM calls | Anthropic Claude (API) |
 | **Guardrail Service** | Groundedness check, "do-not-say" rule match, confidence gate, PII/sensitive filter before display | per-suggestion | rules + cheap LLM check |
@@ -254,7 +254,7 @@ sequenceDiagram
     C->>G: WS: {"type":"suggest"} (rep clicks Suggest)
     G->>O: suggest click
     O->>D: last-N-min transcript window
-    D-->>O: BuiltQuery (light LLM: window → query)
+    D-->>O: BuiltQuery (the raw window is the query)
     O->>R: retrieve(query)
     R-->>O: top snippet + citation + confidence
     O->>L: grounded prompt (cached system+KB)
@@ -271,12 +271,13 @@ sequenceDiagram
 | Stage | Budget | Technique to hold it |
 | --- | --- | --- |
 | Audio frame → STT final for the turn | 300–400 ms | streaming STT, low min-silence (buffered continuously into the window) |
-| Query build (Suggest click → BuiltQuery) | 150–400 ms | **light LLM (Claude Haiku)** over the last-N-min window; small prompt, capped output |
+| Window read (Suggest click → BuiltQuery) | < 10 ms | two Redis reads on the transcript store; no LLM in the trigger path (`3.3` dropped) |
+| Ask extraction (window → search query) | 200–500 ms | the ONLY query-side LLM call (`5.2`, Groq/Llama by default); small prompt, ~30-token output; no second "refine" call — per suggestion it's 2 LLM calls total: this + generation |
 | Retrieval (search + rerank) | 150–400 ms | pre-embedded KB, ANN index, Redis cache of hot Q&A, cross-encoder rerank only on top-k |
 | Generation (first useful token → full card) | 600–1500 ms | **fast model (Claude Haiku)**, **prompt caching** of system + KB context, **streaming** render, capped output tokens |
 | Guardrail | 30–100 ms | rule match + cheap groundedness check; parallelize with first-token stream |
 | Transport + render | 50–150 ms | persistent WS, pre-warmed overlay, render first bullet on first token |
-| **Total** | **~1.2–2.7 s typical** | leaves headroom under the 4 s ceiling |
+| **Total** | **~1.4–3.2 s typical** | leaves headroom under the 4 s ceiling |
 
 **Hot-path rules:**
 - The orchestrator and RT services live in the **same cluster + AZ**; calls are gRPC,
@@ -338,16 +339,19 @@ evaluable and swappable.
   system loopback) — cheaper and more reliable than ML diarization; ML diarization
   is the fallback for single-stream sources.
 - **Keyterm boosting** (`2.6`) feeds product/competitor names per tenant.
-- WebSocket streaming; every partial/final is buffered into the rolling transcript
-  window that the Suggest trigger snapshots.
+- WebSocket streaming; every **final** is written through to the per-session Redis
+  transcript store that the Suggest trigger reads its window from
+  (`transcript_store_techdoc.md`).
 
 ### 7.2 Suggestion Trigger (the "Suggest" button)
 - **Manual trigger — no automatic detection.** The rep clicks **Suggest** in the
   overlay; nothing surfaces otherwise. This removes the flappy "when did the question
   end / is this an objection" problem — the human decides the moment.
-- On a click: snapshot the **last N minutes** of transcript (configurable) from the
-  rolling per-session buffer, then a **light LLM** (small Claude Haiku call) distills
-  that noisy window into a clean **retrieval query** (`BuiltQuery`).
+- On a click: read the **last N minutes** of transcript (configurable,
+  `SUGGEST_LOOKBACK_MS`) from the per-session **Redis transcript store** — one sorted
+  set per call holding the complete conversation, expired by a sliding TTL after the
+  call goes quiet — and emit that window as the **retrieval query** (`BuiltQuery`).
+  No LLM in the trigger (`3.3` dropped).
 - The only "gating" is a per-session **in-flight guard + min-interval** (`3.11`) so a
   double-click doesn't fire two turns.
 - **No proactive/auto layer — permanently.** There is no listener that surfaces on its
@@ -359,8 +363,11 @@ evaluable and swappable.
 - **Per-tenant index.** Ingested docs are chunked, embedded, and stored in
   **pgvector** (MVP) → **Qdrant** (scale). Hybrid search = vector + BM25/keyword
   (`5.2`) with a **cross-encoder reranker** on the top-k (`5.7`).
-- **Query** comes from the Stage-3 light-LLM query builder (`BuiltQuery`); Stage 5 may
-  refine/expand it (`5.3`), but it is not a typed prompt and not the raw transcript.
+- **Query** arrives as the Stage-3 raw transcript window (`BuiltQuery`). The retrieval
+  service's **first, mandatory step** is LLM extraction (`5.3`): a small model call that
+  distills the window into "what the prospect is asking or objecting to" — handling
+  multi-question windows, objections that aren't grammatical questions, and STT
+  disfluency uniformly — and only that extracted ask is embedded and searched.
 - **Confidence scoring** (`5.6`) and **"answer only from approved docs"** (`5.5`):
   below threshold → return nothing rather than hallucinate.
 - **Citations** are first-class: every returned chunk carries `doc_id`, version,

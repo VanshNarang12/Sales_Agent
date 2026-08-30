@@ -10,13 +10,18 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/redis/go-redis/v9"
+
 	"github.com/VanshNarang12/sales-agent/internal/detect"
 	"github.com/VanshNarang12/sales-agent/internal/gateway"
+	"github.com/VanshNarang12/sales-agent/internal/llm"
 	"github.com/VanshNarang12/sales-agent/internal/platform/config"
 	"github.com/VanshNarang12/sales-agent/internal/platform/secrets"
 	"github.com/VanshNarang12/sales-agent/internal/platform/telemetry"
+	"github.com/VanshNarang12/sales-agent/internal/retrieval"
 	"github.com/VanshNarang12/sales-agent/internal/stt"
 	"github.com/VanshNarang12/sales-agent/internal/stt/deepgram"
+	"github.com/VanshNarang12/sales-agent/internal/transcript"
 )
 
 const serviceName = "gateway"
@@ -59,11 +64,12 @@ func run(log *slog.Logger) error {
 	}()
 
 	sttMgr := buildSTT(ctx, cfg, log)
-	detectEng := buildDetect(log)
+	detectEng := buildDetect(ctx, cfg, log)
+	extractor := buildExtract(ctx, cfg, log)
 
 	srv := &http.Server{
 		Addr:              cfg.HTTPAddr,
-		Handler:           gateway.New(cfg, signingKey, sttMgr, detectEng, log).Handler(),
+		Handler:           gateway.New(cfg, signingKey, sttMgr, detectEng, extractor, log).Handler(),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
@@ -81,8 +87,52 @@ func run(log *slog.Logger) error {
 	defer cancel()
 	return srv.Shutdown(shutdownCtx)
 }
-func buildDetect(log *slog.Logger) *detect.Engine {
-	return detect.NewEngine(log, nil)
+// buildDetect wires the suggestion trigger to the Redis transcript store. Suggest
+// needs the store: an unreachable Redis at boot disables the trigger (audio still runs).
+func buildDetect(ctx context.Context, cfg *config.Config, log *slog.Logger) *detect.Engine {
+	opts, err := redis.ParseURL(cfg.RedisURL)
+	if err != nil {
+		log.Warn("suggest disabled: bad REDIS_URL", "err", err)
+		return nil
+	}
+	rdb := redis.NewClient(opts)
+	pingCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	if err := rdb.Ping(pingCtx).Err(); err != nil {
+		log.Warn("suggest disabled: redis unreachable", "err", err)
+		return nil
+	}
+	store := transcript.New(rdb, time.Duration(cfg.TranscriptTTLSeconds)*time.Second)
+	log.Info("transcript store enabled", "ttl_s", cfg.TranscriptTTLSeconds, "lookback_ms", cfg.SuggestLookbackMs)
+	return detect.NewEngine(log, store, int64(cfg.SuggestLookbackMs))
+}
+
+// buildExtract wires the LLM ask-extraction (retrieval step 1). No key / unknown
+// provider ⇒ extraction disabled: Suggest logs the raw window, calls unaffected.
+func buildExtract(ctx context.Context, cfg *config.Config, log *slog.Logger) *retrieval.Extractor {
+	secretKey := map[string]string{
+		"anthropic":         secrets.KeyAnthropicAPI,
+		"openai_compatible": secrets.KeyOpenAIAPI,
+	}[cfg.LLMExtractProvider]
+	var apiKey string
+	if secretKey != "" {
+		if k, err := (secrets.EnvStore{}).Get(ctx, secretKey); err == nil {
+			apiKey = k
+		}
+	}
+	model, err := llm.New(llm.Config{
+		Provider:  cfg.LLMExtractProvider,
+		Model:     cfg.LLMExtractModel,
+		APIKey:    apiKey,
+		BaseURL:   cfg.LLMExtractBaseURL,
+		MaxTokens: int64(cfg.LLMExtractMaxTokens),
+	})
+	if err != nil {
+		log.Warn("extraction disabled; Suggest will log the raw window", "err", err)
+		return nil
+	}
+	log.Info("extraction enabled", "provider", cfg.LLMExtractProvider, "model", cfg.LLMExtractModel)
+	return retrieval.NewExtractor(model)
 }
 
 func buildSTT(ctx context.Context, cfg *config.Config, log *slog.Logger) *stt.Manager {

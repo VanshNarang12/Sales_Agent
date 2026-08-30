@@ -73,7 +73,7 @@ The foundation: get clean audio of both the rep and the prospect into the pipeli
 | 2.3 | **Speaker labeling (rep vs. prospect)** | MVP | 🔴 | Driven primarily by the two-stream split (1.4); ML diarization as a fallback for single-stream sources. |
 | 2.4 | **End-of-turn / end-of-speech detection** | MVP | 🟠 | Cleaner turn boundaries for transcript readability + the look-back window. (No longer used to auto-fire suggestions — the rep triggers via the Suggest button.) |
 | 2.5 | **Punctuation, casing & formatting** | MVP | 🟠 | Readable transcript for the post-call summary and for RAG quality. |
-| 2.6 | **Custom vocabulary / keyterm prompting** (product names, competitors, acronyms) | V1 | 🔴 | Sales calls are full of proper nouns STT mishears; boosting these directly improves the transcript window the query builder reads. |
+| 2.6 | **Custom vocabulary / keyterm prompting** (product names, competitors, acronyms) | V1 | 🔴 | Sales calls are full of proper nouns STT mishears; boosting these directly improves the transcript window retrieval reads. |
 | 2.7 | **Multi-accent / noisy-line robustness** | V1 | 🟠 | Real calls have accents, crosstalk, and bad connections. |
 | 2.8 | **Live PII redaction in transcript** (cards, SSNs, etc.) | V2 | 🟠 | Reduces sensitive-data exposure; required for regulated verticals. |
 | 2.9 | **Multi-language transcription** (beyond English) | Future | 🟢 | Docs: do not build before English is excellent. |
@@ -86,7 +86,7 @@ The foundation: get clean audio of both the rep and the prospect into the pipeli
 
 The layer that decides *when* to surface a card. **The MVP trigger is a manual
 "Suggest" button — the rep decides the moment; there is no automatic detection.** On a
-click we snapshot the last N minutes of transcript, a light LLM builds a clean query,
+click we snapshot the last N minutes of transcript and send it as the retrieval query,
 and retrieval + generation answer it. This removes the flappy "when did the question
 end / is this an objection" problem entirely.
 
@@ -98,7 +98,7 @@ add value move to **post-call analysis / coaching** (Stage 10/21); the rest are 
 | --- | --- | --- | --- | --- |
 | 3.1 | **Suggest-button trigger** (inbound WS click; the only trigger) | MVP | 🔴 | The rep knows the exact moment they want help — one click, zero false fires. Replaces all auto-detection. |
 | 3.2 | **Last-N-minutes transcript window capture** (configurable look-back) | MVP | 🔴 | The customer's question lives in the recent exchange; a tunable window captures it without prompt bloat. |
-| 3.3 | **Light-LLM query builder** (noisy window → clean search query) | MVP | 🔴 | Sales transcripts are noisy; a cheap model extracting intent makes retrieval hit the right docs (vs. embedding raw transcript). |
+| 3.3 | *(dropped)* Light-LLM query builder | — | ⚪ | Removed — the raw transcript window is the retrieval query; no LLM in the trigger path. |
 | 3.4 | **`SuggestRequest → BuiltQuery` contract to retrieval** | MVP | 🔴 | Clean handoff to Stage 5; shaped to be the retrieval input + a future gRPC message. |
 | 3.5 | **Buying-signal surfacing** — *post-call only* (coaching/CRM) | V1 | 🟠 | Surfaces next-best-action; computed after the call, not a live listener. |
 | 3.6 | **"Do-not-say" guardrail on the copilot's own output** | V1 | 🔴 | Killer #3, kept — the Guardrail Service vets each generated card (legal/pricing/security) before display. It checks *our suggestion*, not the rep's speech, so it needs no auto-detect. |
@@ -468,7 +468,7 @@ The features that decide whether this is "valuable" or "a distracting toy."
 ### MVP (0–3 months) — deliver the "magic moment" for a paid pilot
 Desktop app (mac/Win) with mic + system-audio capture and two-stream split ·
 streaming STT (<400 ms) with rep/prospect labeling · **manual "Suggest" button**
-trigger (last-N-min window → light-LLM query builder; no auto-detection) · doc upload + battlecard/objection
+trigger (last-N-min window as the query; no auto-detection, no LLM in the trigger) · doc upload + battlecard/objection
 authoring · embedding + semantic retrieval · **cited, source-only** short
 suggestion cards (objection / Q&A / pricing / **do-not-say** / discovery / stall
 lines) at 2–4 s · always-on-top glanceable overlay with hotkeys, manual ask,

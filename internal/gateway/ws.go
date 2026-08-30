@@ -199,9 +199,25 @@ func composeSinks(sinks ...stt.EventFunc) stt.EventFunc {
 	}
 }
 
+// querySink runs on the Suggest goroutine (off the WS read loop); the in-flight
+// guard stays held during extraction, so clicks can't stack LLM calls.
 func (s *Server) querySink() detect.EmitFunc {
 	return func(q detect.BuiltQuery) {
-		fmt.Printf("[suggest] session=%s query=%q\n", q.SessionID, q.Query)
+		if s.extract == nil {
+			fmt.Printf("[suggest] session=%s query=%q\n", q.SessionID, q.Query)
+			return
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		ask, err := s.extract.Extract(ctx, q)
+		switch {
+		case err != nil:
+			s.log.Warn("extraction failed; no suggestion", "err", err, "session", q.SessionID)
+		case ask == "":
+			s.log.Info("suggest: no ask in window", "session", q.SessionID)
+		default:
+			fmt.Printf("[suggest] session=%s ask=%q\n", q.SessionID, ask)
+		}
 	}
 }
 

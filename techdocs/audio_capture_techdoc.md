@@ -10,7 +10,13 @@
 | **Plane**         | Client (desktop) → Real-Time Gateway                        |
 | **Owner**         | Client                                                      |
 | **Status**        | in-progress                                                 |
-| **Last updated**  | 2026-06-13                                                  |
+| **Last updated**  | 2026-08-26                                                  |
+
+> **Repo split (2026-08-26):** the desktop client now lives in its own repository,
+> [`Sales_Agent_Frontend`](https://github.com/VanshNarang12/Sales_Agent_Frontend),
+> with its git history preserved. Every `client/...` path in this techdoc maps to the
+> root of that repo (e.g. `client/src/main.ts` → `src/main.ts`). This backend repo no
+> longer contains client code.
 
 
 > **How to read this doc.** It is both a **spec** (exact formats, types, numbers an

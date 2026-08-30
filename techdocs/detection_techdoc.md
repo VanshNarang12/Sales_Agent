@@ -10,12 +10,12 @@
 | --- | --- |
 | **Topic** | `suggestion_trigger` (file: `detection_techdoc.md`) |
 | **Roadmap stage** | `ROADMAP.md` Stage 3 — Suggestion Trigger (the "Suggest" button) |
-| **Feature IDs** | `FEATURES.md` — `3.1` Suggest-button trigger, `3.2` last-N-min window capture, `3.3` light-LLM query builder, `3.4` request/response contract to retrieval, `3.11` button rate-limit / in-flight guard |
+| **Feature IDs** | `FEATURES.md` — `3.1` Suggest-button trigger, `3.2` last-N-min window capture, ~~`3.3`~~ (dropped), `3.4` request/response contract to retrieval, `3.11` button rate-limit / in-flight guard |
 | **Architecture** | `ARCHITECTURE.md` — §4 (Suggestion Trigger service), §5.1/§5.2 (hot path + latency budget), §7.2 (trigger design), ADR-001/002/007 |
 | **Plane** | Real-Time |
 | **Owner** | Vansh |
-| **Status** | in-progress (building — repurposing the transcript-window buffer into the button flow) |
-| **Last updated** | 2026-08-16 |
+| **Status** | in-progress (trigger, window, contract, guard, client button, Redis store: done · `3.3` dropped · remaining: server min-interval + metrics) |
+| **Last updated** | 2026-08-26 |
 
 ## 1. Overview
 
@@ -49,8 +49,8 @@ the query**.
   - `3.2` **Last-N-minutes window capture** — snapshot the rolling per-session
     transcript buffer (both speakers, merged, time-ordered) for a **configurable**
     look-back (`SUGGEST_LOOKBACK_MS`, default e.g. 90 s).
-  - `3.3` **Light-LLM query builder** — a small model turns the window into a clean
-    retrieval query (`BuiltQuery`), stripping filler/small-talk.
+  - ~~`3.3` Light-LLM query builder~~ — **dropped (2026-08-26)**: no LLM in the
+    trigger; the raw window is the retrieval query.
   - `3.4` **Request/response contract** — `SuggestRequest → BuiltQuery`, shaped to be
     the Stage-5 retrieval input and a future gRPC message.
   - `3.11` **Button rate-limit / in-flight guard** — one suggestion turn per session at
@@ -98,8 +98,10 @@ the query**.
   classifiers' worth of precision/recall tuning for a trigger the rep can do perfectly
   with one click).
 
-**D2 — Two-model RAG pipeline: a LIGHT LLM builds the query, then RETRIEVAL, then a BIG
-LLM answers. Not one big call over the whole transcript, not raw-transcript embedding.**
+**D2 — ~~Two-model RAG pipeline~~ DROPPED (2026-08-26): there is no light-LLM query
+builder. The raw transcript window is emitted as the retrieval query. The pipeline is
+click → window → retrieval → big LLM (Stage 6). Original decision kept below for
+history only.**
 - **Decision:** click → **light LLM** (`window → search query`) → **retrieval** fetches
   top-K docs for that query → **big LLM** (`query + docs → cited answer`).
 - **Why:**
@@ -153,8 +155,9 @@ interface + a provider registry, mirroring `buildSTT`.**
   in Stage 6). A **`Registry`** maps `provider → constructor`, exactly like the `buildSTT`
   switch in `cmd/gateway/main.go`. Swapping either model is a **DB edit**; adding a
   provider is *register a constructor + insert a doc*, no change to `engine.go`.
-- **Why:** decouples *which* model runs from the trigger logic; lets us downgrade/swap the
-  query builder or answer model by editing one global doc; keeps provider API keys
+- **Why:** *(now Stage-6 only — the trigger makes no model calls)* decouples *which*
+  model runs from the calling logic; lets us downgrade/swap the answer model by editing
+  one global doc; keeps provider API keys
   server-side (secrets vault, keyed by provider — never in Mongo, never on the client).
   Global (no `tenant_id`), loaded at boot.
 - **Note:** this is the surviving half of the old D8 (pluggable model connectors). The old
@@ -172,7 +175,7 @@ interface + a provider registry, mirroring `buildSTT`.**
 - **Decision:** while a suggestion turn is running for a session, further clicks are
   **dropped** (not queued); a small min-interval floor also debounces double-clicks. This
   is the only "throttle" left — it guards the button, not an auto-firer.
-- **Why:** a turn spans a light-LLM call + retrieval + a big-LLM call (~1–3 s); firing a
+- **Why:** a turn spans retrieval + a big-LLM call (~1–3 s); firing a
   second turn on an impatient double-click wastes tokens and races two answers onto the
   overlay. Drop-not-queue keeps the answer tied to *now*, not a stale click.
 
@@ -182,36 +185,35 @@ Go package `internal/detect/` (kept name; per `coding_standards §2`), consumed 
 gateway. Built by **repurposing** the existing transcript-window buffer (previously the
 detection engine) into the button-triggered flow.
 
-Build order: reuse the buffer → add the click entrypoint + contract → light-LLM query
-builder connector → in-flight guard.
+Build order: reuse the buffer → add the click entrypoint + contract → in-flight guard.
 
+Built (on disk today):
 ```
 internal/detect/
   ├── moment.go            # contract: SuggestRequest, BuiltQuery, Speaker alias, EmitFunc (repurposed from DetectedMoment)
-  ├── engine.go            # Engine + per-session rolling transcript buffer (OnTranscript fills it); Suggest() reads it
-  ├── engine_test.go       # synthetic-TranscriptEvent tests: buffer fill + window snapshot + Suggest() → BuiltQuery
-  ├── window.go            # last-N-min snapshot: merge both speakers in time order, trim to SUGGEST_LOOKBACK_MS (D3)
-  ├── window_test.go       # window trimming / speaker-merge / ordering tests with an injectable clock
-  ├── query.go             # QueryBuilder: window → search query via the light-model connector (D2)
-  ├── query_test.go        # query-builder parse tests with a fake model response
-  ├── guard.go             # per-session in-flight guard + min-interval (D7)
-  ├── model/
-  │   ├── connector.go     # Connector interface (Complete) + Registry (provider → constructor) (D5)
-  │   └── anthropic.go     # Anthropic/Claude connector (first provider); key from secrets vault
-  └── store/
-      ├── mongo.go         # ModelConfigStore (model_configs); global reads, loaded once at boot (D5)
-      └── mongo_test.go    # load/decode test against model_config docs
-internal/platform/config/config.go # add MONGO_URI, SUGGEST_LOOKBACK_MS, SUGGEST_MIN_INTERVAL_MS
-internal/gateway/ws.go              # fill the buffer from the transcript EventFunc; route the inbound {"type":"suggest"} click → Engine.Suggest
-cmd/gateway/main.go                 # build ModelConfigStore + Engine at boot; inject into the Server
+  ├── engine.go            # Engine + Session: OnTranscript → TranscriptStore.Append; Suggest() → Window read → joinWindow → BuiltQuery; in-flight guard inline
+  └── engine_test.go       # fake-store tests: window → query, pass-through, empty/error paths, in-flight guard
+internal/transcript/                # Redis transcript store (ZADD+EXPIRE / ZRANGEBYSCORE) — see transcript_store_techdoc.md
+internal/platform/config/config.go # SUGGEST_LOOKBACK_MS, TRANSCRIPT_TTL_SECONDS
+internal/gateway/ws.go              # compose detect into the transcript sink; route the inbound {"type":"suggest"} click → Session.Suggest
+cmd/gateway/main.go                 # buildDetect: redis ping → transcript.Store → detect.Engine (nil = Suggest disabled, call still runs)
+```
+Planned (guard hardening only):
+```
+internal/detect/
+  └── (min-interval)       # server-side SUGGEST_MIN_INTERVAL_MS alongside the in-flight guard (D7)
 ```
 
+> **Storage moved (2026-08-26):** the in-RAM rolling buffer described below was since
+> replaced by the **Redis transcript store** (`internal/transcript`,
+> `transcript_store_techdoc.md`) — complete call, no trimming, sliding TTL; the
+> `OnTranscript` fill path and window semantics are unchanged, only the backing moved.
+>
 > **Repurposed, not rebuilt:** `engine.go`'s per-speaker rolling buffer and
 > `OnTranscript` fill path are kept verbatim — they are exactly the last-N-min buffer the
 > button needs. What's **removed** is the auto-emit path (the `Evaluator` loop that fired
 > a moment on every transcript event) and the `rules/`, `throttle` machinery. What's
-> **added** is `Suggest()` (snapshot → query builder → emit `BuiltQuery`), `window.go`,
-> `query.go`, and `guard.go`.
+> **added** is `Suggest()` (window read → emit `BuiltQuery`).
 
 ## 5. Architecture & data flow
 
@@ -224,8 +226,7 @@ cmd/gateway/main.go                 # build ModelConfigStore + Engine at boot; i
                                                                   │
                                                                   ├─ in-flight guard / min-interval (3.11, D7)
                                                                   ├─ snapshot last-N-min window (D3)
-                                                                  ├─ light-LLM query builder      (window → query, D2/D5)
-                                                                  └─ EmitFunc(BuiltQuery)
+                                                                  └─ EmitFunc(BuiltQuery)   (the window is the query)
                                                                         │
                                                         today: console log + metrics + WS {"type":"query",…}
                                                         Stage 5: → Retrieval(query) → Stage 6: answer card
@@ -238,7 +239,7 @@ cmd/gateway/main.go                 # build ModelConfigStore + Engine at boot; i
   (optionally) pushed to the client as `{"type":"query",…}` for visibility. In Stage 5 the
   emit becomes the retrieval call.
 - **Speaker context:** the window merges **both** channels (customer question + the rep's
-  setup) so the query builder has the full exchange. Speaker labels come free from the
+  setup) so the query window has the full exchange. Speaker labels come free from the
   channel (ADR-007) — no diarization.
 - **Lifecycle:** the engine is process-wide (like `stt.Manager`); per-session state (the
   rolling buffer + in-flight flag) is created on first transcript and torn down with the
@@ -267,7 +268,7 @@ cmd/gateway/main.go                 # build ModelConfigStore + Engine at boot; i
   - `detect.Session.OnTranscript(ctx, TranscriptEvent)` — fills the buffer (called from
     the gateway's transcript sink).
   - `detect.Session.Suggest(ctx, lookbackMs int64)` — called when the gateway receives the
-    Suggest click; runs the guard + window snapshot + query builder.
+    Suggest click; runs the guard + window read → emits.
 - **Outbound (internal event):** `BuiltQuery`, delivered via an `EmitFunc` (Go callback
   today; a gRPC stream message when the Orchestrator is split out).
   ```
@@ -279,16 +280,12 @@ cmd/gateway/main.go                 # build ModelConfigStore + Engine at boot; i
   BuiltQuery {
     TenantID   string
     SessionID  string
-    Query      string     // the clean search query the light LLM produced (D2)
-    WindowText string     // the transcript window it was built from (observability / future citation)
+    Query      string     // the raw last-N-min transcript window
     StartMs    int64      // window span, ms from session start
     EndMs      int64
-    Source     string     // "model" — which path built it (fixed; only the light-LLM path exists)
   }
   ```
-- **External:** the query builder calls the configured **light model** (Anthropic first)
-  through the `model.Connector` registry — server-side key, never on the client. The
-  answer model call is Stage 6.
+- **External:** none — the trigger makes no model calls. The answer model call is Stage 6.
 
 ## 8. External dependencies
 
@@ -297,11 +294,9 @@ cmd/gateway/main.go                 # build ModelConfigStore + Engine at boot; i
   model**; a click then returns a "suggestions unavailable" event instead of a query — the
   call/audio path is never blocked (same "never fatal" stance as STT's audio-only
   degradation, transcription §8).
-- **A configured model provider** (Anthropic first, via the `model.Connector` registry,
-  D5) for the query builder. Provider API key comes from the **secrets vault**, keyed by
-  provider — never from Mongo, never on the client. **Degradation:** query-builder
-  unavailable/timed-out → the click returns an error event; no auto-fallback query (a
-  wrong query wastes a retrieval + answer round-trip).
+- **No model provider** — the trigger makes no LLM calls (`3.3` dropped). Its only
+  dependency is Redis (the transcript store); Redis unreachable at boot → Suggest
+  disabled, the call/audio path unaffected.
 
 ## 9. Configuration & secrets
 
@@ -341,8 +336,7 @@ Named, not valued:
 
 - **Unit:** `window_test.go` — the last-N-min snapshot merges both speakers in time order
   and trims to the look-back, using an **injectable clock** (no real sleeps).
-  `query_test.go` — the query builder maps a fake light-model response to a `BuiltQuery`
-  and handles a model error. `guard_test.go` — a second click during an in-flight turn is
+  `guard_test.go` — a second click during an in-flight turn is
   dropped; a click inside the min-interval is dropped.
 - **Integration (no Deepgram needed):** feed **synthetic `TranscriptEvent`s** into
   `OnTranscript` to fill the buffer, then call `Suggest()` and assert the emitted
@@ -360,8 +354,7 @@ Telemetry-first (`coding_standards §5`). Metrics (labeled `tenant_id`, `source`
 - `suggest_dropped_total{reason}` — counter (`reason` = `in_flight`|`min_interval`|
   `disabled`|`no_model`) so the guard is measurable, not a black box.
 - `suggest_query_latency_ms` — **histogram**, click-received → `BuiltQuery`-emitted (the
-  query-builder round-trip); part of the §5.2 end-to-end budget.
-- `suggest_query_builder_errors_total` — light-model failures.
+  Redis window read); part of the §5.2 end-to-end budget.
 - Trace span per suggestion turn, child of the session span (extends the Stage-2 trace so
   per-stage latency is visible end to end through retrieval + generation).
 - **No raw transcript/query text in prod logs** (`coding_standards §7`) — the console
@@ -372,9 +365,6 @@ Telemetry-first (`coding_standards §5`). Metrics (labeled `tenant_id`, `source`
 - **Look-back tuning** (`SUGGEST_LOOKBACK_MS`) — the main quality knob; tune against a
   labeled corpus of recorded calls (too short misses multi-sentence questions, too long
   dilutes the query).
-- **Query-builder prompt** — how much rep-context vs. customer-question to weight; whether
-  to have it emit a *structured* query (intent + entities) instead of a plain string for
-  better retrieval.
 - **Do-not-say guardrail** (`3.6`, killer #3) — RESOLVED as a guardrail on the copilot's
   **own suggestion output** (Stage 9 Guardrail Service vets each card before display), not
   a live listener. Open only in *how strict* that output check is, not whether we
@@ -385,6 +375,18 @@ Telemetry-first (`coding_standards §5`). Metrics (labeled `tenant_id`, `source`
 - **Orchestrator/Trigger service split** (D4) — relocate when fan-out demands it.
 
 ## 14. Changelog
+- `2026-08-26` — **`3.3` light-LLM query builder DROPPED entirely.** No LLM in the
+  trigger path: the raw last-N-min window is emitted as the retrieval query.
+  Removed from code (`QueryBuilder` interface, builder plumbing, `WindowText`/`Source`
+  fields on `BuiltQuery`) and from ROADMAP/FEATURES/ARCHITECTURE. D2 and the D5
+  model-connector plan are void for Stage 3.
+- `2026-08-26` — **Buffer → Redis.** The per-session in-RAM slice (400-entry cap,
+  `snapshot()`) replaced by the Redis transcript store (`internal/transcript`,
+  sliding TTL — see `transcript_store_techdoc.md`); detect now depends on a
+  `TranscriptStore` interface. **Suggest button shipped** in the desktop client
+  (client moved to the `Sales_Agent_Frontend` repo). Config added:
+  `SUGGEST_LOOKBACK_MS`, `TRANSCRIPT_TTL_SECONDS`. Remaining for Stage 3: the `3.3`
+  light-LLM query builder, server-side min-interval, §12 metrics.
 - `2026-08-16` — **PIVOT: automatic detection removed; Stage 3 is now the manual
   "Suggest" button.** The old "detect when a question ends / classify objection /
   competitor / pricing → auto-fire a card" architecture is deleted (D1). New flow: rep

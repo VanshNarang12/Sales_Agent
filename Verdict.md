@@ -10,7 +10,7 @@ So the opportunity is not “can this exist?” It already exists. The opportuni
 
 The best version is probably:
 
-**A real-time sales copilot for B2B sales teams that listens during Zoom/Google Meet/Teams calls, searches approved company knowledge, detects objections, and gives the rep short, source-backed suggestions in the moment.**
+**A real-time sales copilot for B2B sales teams that transcribes Zoom/Google Meet/Teams calls and — when the rep clicks Suggest — searches approved company knowledge and gives short, source-backed suggestions in the moment.**
 
 The worst version is:
 

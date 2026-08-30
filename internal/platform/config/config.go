@@ -47,6 +47,17 @@ type Config struct {
 	STTModel string
 	// STTEndpointingMs is the silence threshold (ms) that marks end-of-turn (feature 2.4).
 	STTEndpointingMs int
+
+	// SuggestLookbackMs
+	SuggestLookbackMs int
+	TranscriptTTLSeconds int
+
+	// LLM extraction role (retrieval step 1) — provider/model are registry lookups,
+	// so swapping vendors is an env edit (query_extraction_techdoc.md §3).
+	LLMExtractProvider  string
+	LLMExtractModel     string
+	LLMExtractBaseURL   string
+	LLMExtractMaxTokens int
 }
 
 // Load reads configuration from the environment and validates it.
@@ -66,6 +77,14 @@ func Load(serviceName string) (*Config, error) {
 		STTProvider:      getenv("STT_PROVIDER", "deepgram"),
 		STTModel:         getenv("STT_MODEL", "nova-3"),
 		STTEndpointingMs: getenvInt("STT_ENDPOINTING_MS", 300),
+
+		SuggestLookbackMs:    getenvInt("SUGGEST_LOOKBACK_MS", 90_000),
+		TranscriptTTLSeconds: getenvInt("TRANSCRIPT_TTL_SECONDS", 1800),
+
+		LLMExtractProvider:  getenv("LLM_EXTRACT_PROVIDER", "openai_compatible"),
+		LLMExtractModel:     getenv("LLM_EXTRACT_MODEL", "llama-3.3-70b-versatile"),
+		LLMExtractBaseURL:   getenv("LLM_EXTRACT_BASE_URL", "https://api.groq.com/openai/v1"),
+		LLMExtractMaxTokens: getenvInt("LLM_EXTRACT_MAX_TOKENS", 300),
 	}
 	// AUTH_DISABLED is honored only in dev — never bypass auth in staging/prod.
 	if c.Env != "dev" {

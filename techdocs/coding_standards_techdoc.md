@@ -32,7 +32,7 @@ Monorepo. Standard Go project layout:
 /api/openapi/           # REST/OpenAPI specs (control plane)
 /migrations/            # SQL migrations (versioned, forward-only)
 /deploy/                # Terraform + k8s/Helm
-/client/                # Electron desktop app (TS/React)
+# (desktop client moved 2026-08-26 to its own repo: github.com/VanshNarang12/Sales_Agent_Frontend)
 /techdocs/              # one <topic>_techdoc.md per section (see INDEX.md)
 ```
 - A service never imports another service's `/internal`. Cross-service contact is
