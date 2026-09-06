@@ -49,7 +49,7 @@ type Config struct {
 	STTEndpointingMs int
 
 	// SuggestLookbackMs
-	SuggestLookbackMs int
+	SuggestLookbackMs    int
 	TranscriptTTLSeconds int
 
 	// LLM extraction role (retrieval step 1) — provider/model are registry lookups,
@@ -58,6 +58,16 @@ type Config struct {
 	LLMExtractModel     string
 	LLMExtractBaseURL   string
 	LLMExtractMaxTokens int
+
+	// Knowledge-base ingest (Stage 4) — knowledge_base_techdoc.md §9.
+	EmbedProvider      string
+	EmbedModel         string
+	EmbedBaseURL       string
+	EmbedDims          int // must match the migration's vector(N)
+	EmbedBatchSize     int
+	ChunkTargetTokens  int // approximate tokens (chars ÷ 4)
+	ChunkOverlapTokens int
+	MaxUploadMB        int
 }
 
 // Load reads configuration from the environment and validates it.
@@ -85,6 +95,15 @@ func Load(serviceName string) (*Config, error) {
 		LLMExtractModel:     getenv("LLM_EXTRACT_MODEL", "llama-3.3-70b-versatile"),
 		LLMExtractBaseURL:   getenv("LLM_EXTRACT_BASE_URL", "https://api.groq.com/openai/v1"),
 		LLMExtractMaxTokens: getenvInt("LLM_EXTRACT_MAX_TOKENS", 300),
+
+		EmbedProvider:      getenv("EMBED_PROVIDER", "openai_compatible"),
+		EmbedModel:         getenv("EMBED_MODEL", "nomic-embed-text-v1.5"),
+		EmbedBaseURL:       getenv("EMBED_BASE_URL", "https://api.groq.com/openai/v1"),
+		EmbedDims:          getenvInt("EMBED_DIMS", 768),
+		EmbedBatchSize:     getenvInt("EMBED_BATCH_SIZE", 64),
+		ChunkTargetTokens:  getenvInt("CHUNK_TARGET_TOKENS", 450),
+		ChunkOverlapTokens: getenvInt("CHUNK_OVERLAP_TOKENS", 60),
+		MaxUploadMB:        getenvInt("MAX_UPLOAD_MB", 15),
 	}
 	// AUTH_DISABLED is honored only in dev — never bypass auth in staging/prod.
 	if c.Env != "dev" {

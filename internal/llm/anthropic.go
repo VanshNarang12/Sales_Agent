@@ -3,9 +3,9 @@ package llm
 import (
 	"context"
 	"fmt"
-	"strings"
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/option"
+	"strings"
 )
 
 func init() {

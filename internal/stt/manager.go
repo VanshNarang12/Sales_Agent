@@ -114,10 +114,10 @@ type Session struct {
 // first frame (lazy open); `cur` is the live stream (nil while (re)connecting), guarded
 // by `mu` because Write (gateway goroutine) and the supervisor race on it.
 type channelStream struct {
-	once    sync.Once
-	speaker Speaker
-	mu      sync.Mutex
-	cur     Stream
+	once        sync.Once
+	speaker     Speaker
+	mu          sync.Mutex
+	cur         Stream
 	lastFrameNs atomic.Int64
 }
 

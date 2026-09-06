@@ -13,9 +13,12 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"github.com/VanshNarang12/sales-agent/internal/detect"
+	"github.com/VanshNarang12/sales-agent/internal/embed"
 	"github.com/VanshNarang12/sales-agent/internal/gateway"
+	"github.com/VanshNarang12/sales-agent/internal/kb"
 	"github.com/VanshNarang12/sales-agent/internal/llm"
 	"github.com/VanshNarang12/sales-agent/internal/platform/config"
+	"github.com/VanshNarang12/sales-agent/internal/platform/db"
 	"github.com/VanshNarang12/sales-agent/internal/platform/secrets"
 	"github.com/VanshNarang12/sales-agent/internal/platform/telemetry"
 	"github.com/VanshNarang12/sales-agent/internal/retrieval"
@@ -66,10 +69,11 @@ func run(log *slog.Logger) error {
 	sttMgr := buildSTT(ctx, cfg, log)
 	detectEng := buildDetect(ctx, cfg, log)
 	extractor := buildExtract(ctx, cfg, log)
+	ingester := buildIngest(ctx, cfg, log)
 
 	srv := &http.Server{
 		Addr:              cfg.HTTPAddr,
-		Handler:           gateway.New(cfg, signingKey, sttMgr, detectEng, extractor, log).Handler(),
+		Handler:           gateway.New(cfg, signingKey, sttMgr, detectEng, extractor, ingester, log).Handler(),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
@@ -133,6 +137,34 @@ func buildExtract(ctx context.Context, cfg *config.Config, log *slog.Logger) *re
 	}
 	log.Info("extraction enabled", "provider", cfg.LLMExtractProvider, "model", cfg.LLMExtractModel)
 	return retrieval.NewExtractor(model)
+}
+
+// buildIngest wires Stage-4 upload: Neon pool + embedder + Ingester. Any missing
+// piece ⇒ nil ⇒ POST /v1/documents answers 503; live calls unaffected.
+func buildIngest(ctx context.Context, cfg *config.Config, log *slog.Logger) gateway.DocumentIngester {
+	pool, err := db.Connect(ctx, cfg.DatabaseURL)
+	if err != nil {
+		log.Warn("ingest disabled: database unreachable", "err", err)
+		return nil
+	}
+	var apiKey string
+	if k, err := (secrets.EnvStore{}).Get(ctx, secrets.KeyOpenAIAPI); err == nil {
+		apiKey = k
+	}
+	embedder, err := embed.New(embed.Config{
+		Provider:  cfg.EmbedProvider,
+		Model:     cfg.EmbedModel,
+		APIKey:    apiKey,
+		BaseURL:   cfg.EmbedBaseURL,
+		Dims:      cfg.EmbedDims,
+		BatchSize: cfg.EmbedBatchSize,
+	})
+	if err != nil {
+		log.Warn("ingest disabled: embedder", "err", err)
+		return nil
+	}
+	log.Info("ingest enabled", "embed_provider", cfg.EmbedProvider, "embed_model", cfg.EmbedModel)
+	return kb.NewIngester(embedder, kb.NewStore(pool), cfg.ChunkTargetTokens, cfg.ChunkOverlapTokens)
 }
 
 func buildSTT(ctx context.Context, cfg *config.Config, log *slog.Logger) *stt.Manager {

@@ -117,7 +117,7 @@ The grounding source — what makes answers "approved," not generic.
 | # | Feature | Tier | Pri | Rationale |
 | --- | --- | --- | --- | --- |
 | 4.1 | **Document upload** (PDF, DOCX, PPTX, TXT, MD) | MVP | 🔴 | Pitch decks, pricing sheets, FAQs, case studies, battlecards. |
-| 4.2 | **Manual battlecard / objection-handler entry** (structured) | MVP | 🔴 | The highest-value content; should be first-class, not just a doc. |
+| 4.2 | *(dropped 2026-08-30)* Manual battlecard / objection-handler entry | — | ⚪ | Removed — documents-only KB; objection/competitor answers come from uploaded files. |
 | 4.3 | **Website / URL ingestion** (crawl pricing pages, docs sites) | V1 | 🟠 | Fast onboarding; docs cite painful setup as a churn risk. |
 | 4.4 | **Google Drive / Notion connectors** | V1 | 🔴 | Docs explicitly call out fast import from Drive/Notion to avoid onboarding pain. |
 | 4.5 | **Automatic chunking + embedding pipeline** | MVP | 🔴 | Semantic search foundation (LivePitchAI indexes everything via semantic search). |
@@ -194,7 +194,7 @@ What makes this a *sales* copilot, not a generic LLM overlay (a core moat per th
 | # | Feature | Tier | Pri | Rationale |
 | --- | --- | --- | --- | --- |
 | 8.1 | **Real-time objection-handling cards** | MVP | 🔴 | **Killer feature #1.** |
-| 8.2 | **Competitor battlecards** | MVP | 🔴 | **Killer feature #2** — pulled via the Suggest button when a competitor comes up (not auto-surfaced). |
+| 8.2 | **Competitor answers from uploaded docs** | MVP | 🔴 | **Killer feature #2** — pulled via the Suggest button when a competitor comes up (not auto-surfaced). Battlecard entity dropped 2026-08-30; content lives in uploaded documents. |
 | 8.3 | **"Do-not-say" compliance guardrails** | MVP | 🔴 | **Killer feature #3** — a guardrail on the copilot's own generated cards (see 6.5), not a live listener. |
 | 8.4 | **Product Q&A answers (cited)** | MVP | 🔴 | Reps don't know every technical detail. |
 | 8.5 | **Pricing / packaging guidance** | MVP | 🔴 | Prevents wrong numbers / overpromising. |
@@ -261,8 +261,8 @@ What makes this a *sales* copilot, not a generic LLM overlay (a core moat per th
 | # | Feature | Tier | Pri | Rationale |
 | --- | --- | --- | --- | --- |
 | 12.1 | **Admin playbook builder** (control what guidance reps see) | MVP | 🔴 | Sales leaders must govern the live guidance — a named must-have. |
-| 12.2 | **Objection → response mapping editor** | MVP | 🔴 | The core authoring surface for killer feature #1. |
-| 12.3 | **Battlecard editor** (per competitor) | MVP | 🔴 | Authoring for killer feature #2. |
+| 12.2 | *(dropped 2026-08-30)* Objection → response mapping editor | — | ⚪ | Removed with the battlecard entity — no structured entries to author. |
+| 12.3 | *(dropped 2026-08-30)* Battlecard editor (per competitor) | — | ⚪ | Removed with the battlecard entity. |
 | 12.4 | **"Do-not-say" rules editor** | MVP | 🔴 | Authoring for killer feature #3. |
 | 12.5 | *(dropped)* Trigger/tracker configuration (keywords → auto-cards) | — | ⚪ | Existed to auto-fire cards; removed — the rep triggers via the Suggest button. |
 | 12.6 | **Team & role management** (admin/manager/rep) | V1 | 🔴 | Needed for team plans & permissions. |
@@ -403,7 +403,7 @@ Mirrors the pricing model from `Verdict.md` (Free → Solo → Pro → Team → 
 | 17.1 | **<10-minute setup** (install → upload docs → first call) | MVP | 🔴 | "A founder can upload docs and use it on a call within 10 minutes" — a named win condition. |
 | 17.2 | **Guided doc-upload wizard** | MVP | 🔴 | Reduce the painful-data-setup churn risk. |
 | 17.3 | **Mock-call onboarding** (test before a real call) | V1 | 🟠 | Builds confidence without risk; also a demo asset. |
-| 17.4 | **Sample/templated content** (objection & battlecard starters) | V1 | 🟠 | Cold-start value before the team uploads everything. |
+| 17.4 | **Sample/templated content** (starter doc templates, e.g. objection-answers doc) | V1 | 🟠 | Cold-start value before the team uploads everything. |
 | 17.5 | **In-app checklists & tooltips** | V1 | 🟢 | Drive activation milestones. |
 | 17.6 | **Team-invite & playbook-share prompt after activation** | V1 | 🔴 | The PLG → team-plan expansion trigger. |
 | 17.7 | **Quick connectors (Drive/Notion/website)** during onboarding | V1 | 🟠 | Fast KB population (ties to 4.3/4.4). |
@@ -468,7 +468,7 @@ The features that decide whether this is "valuable" or "a distracting toy."
 ### MVP (0–3 months) — deliver the "magic moment" for a paid pilot
 Desktop app (mac/Win) with mic + system-audio capture and two-stream split ·
 streaming STT (<400 ms) with rep/prospect labeling · **manual "Suggest" button**
-trigger (last-N-min window as the query; no auto-detection, no LLM in the trigger) · doc upload + battlecard/objection
+trigger (last-N-min window as the query; no auto-detection, no LLM in the trigger) · doc upload (documents-only KB)
 authoring · embedding + semantic retrieval · **cited, source-only** short
 suggestion cards (objection / Q&A / pricing / **do-not-say** / discovery / stall
 lines) at 2–4 s · always-on-top glanceable overlay with hotkeys, manual ask,

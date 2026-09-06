@@ -6,6 +6,7 @@ const (
 	KeyAnthropicAPI = "ANTHROPIC_API_KEY"
 	KeyOpenAIAPI    = "OPENAI_API_KEY"
 )
+
 var AllKeys = []string{
 	KeyAuthSigning,
 	KeyDeepgramAPI,

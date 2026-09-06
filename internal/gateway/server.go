@@ -22,14 +22,15 @@ import (
 type Server struct {
 	cfg        *config.Config
 	signingKey string
-	stt     *stt.Manager
-	detect  *detect.Engine
-	extract *retrieval.Extractor
-	log     *slog.Logger
+	stt        *stt.Manager
+	detect     *detect.Engine
+	extract    *retrieval.Extractor
+	ingest     DocumentIngester
+	log        *slog.Logger
 }
 
-func New(cfg *config.Config, signingKey string, sttMgr *stt.Manager, detectEng *detect.Engine, extractor *retrieval.Extractor, log *slog.Logger) *Server {
-	return &Server{cfg: cfg, signingKey: signingKey, stt: sttMgr, detect: detectEng, extract: extractor, log: log}
+func New(cfg *config.Config, signingKey string, sttMgr *stt.Manager, detectEng *detect.Engine, extractor *retrieval.Extractor, ingester DocumentIngester, log *slog.Logger) *Server {
+	return &Server{cfg: cfg, signingKey: signingKey, stt: sttMgr, detect: detectEng, extract: extractor, ingest: ingester, log: log}
 }
 
 // Handler builds the HTTP/WS routes with telemetry and auth wired in.
@@ -51,6 +52,7 @@ func (s *Server) Handler() http.Handler {
 
 	// Authenticated, tenant-scoped realtime endpoint.
 	mux.Handle("GET /v1/realtime", s.authMiddleware(http.HandlerFunc(s.handleRealtime)))
+	mux.Handle("POST /v1/documents", s.authMiddleware(http.HandlerFunc(s.handleDocumentUpload)))
 
 	return telemetry.HTTPMiddleware(s.cfg.ServiceName)(mux)
 }

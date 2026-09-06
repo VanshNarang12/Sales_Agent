@@ -58,6 +58,16 @@ When the section is complete, revisit the techdoc and:
 - add a dated **changelog** entry,
 - flip the index status to `done`.
 
+## Writing style (mandatory — applies to techdocs AND chat explanations)
+
+- **Simple words, full depth.** Keep every technical fact, decision, and number.
+  Simplify the wording, not the content.
+- Short sentences. No dramatic phrasing ("the missing half", "outsized payoff",
+  "honest landscape"). Say it plainly.
+- Don't explain basics the reader already knows (what a table is, what an API is).
+  Do define product/domain terms on first use (battlecard, tenant, chunk).
+- Prefer "X does Y because Z" over long clause chains.
+
 ## Rules
 
 - **One topic per techdoc.** If a section spans two clear topics, write two techdocs.

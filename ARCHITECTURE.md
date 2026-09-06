@@ -213,7 +213,7 @@ All Go.
 | --- | --- |
 | **Auth/Identity** | Sign-up, OAuth, sessions, SSO/SAML/OIDC (V2), RBAC |
 | **Tenant/Org** | Orgs, teams, seats, roles, employee registry (§13A) |
-| **Admin/Playbook** | Objection→response, battlecards, do-not-say rules, methodology config, approval workflow |
+| **Admin/Playbook** | Do-not-say rules, methodology config, approval workflow *(objection→response + battlecard editors dropped 2026-08-30 — documents-only KB)* |
 | **Knowledge/Ingestion** | Upload/connectors (Drive/Notion/URL), parse, chunk, embed (via embeddings API), version, index per tenant |
 | **Billing/Metering** | Usage metering (minutes), plans, Stripe, fair-use/overage, seat mgmt |
 | **CRM Integration** | HubSpot/Salesforce OAuth, field mapping, post-call write-back, context pull |
@@ -459,7 +459,7 @@ flowchart TB
 ### 9.3 Core entities (simplified)
 ```
 Org 1─* Team 1─* Employee/User      Org 1─* KnowledgeDoc 1─* Chunk(+embedding)
-Org 1─* Playbook 1─* {ObjectionRule, Battlecard, DoNotSayRule}
+Org 1─* Playbook 1─* {DoNotSayRule}   -- ObjectionRule/Battlecard dropped 2026-08-30 (documents-only KB)
 Call ─1 Org, ─1 Employee(rep)  ─* SuggestionEvent ─* Feedback
 Call ─1 ConsentRecord          ─0..1 Recording/Transcript(consent-gated)
 Call ─0..1 PostCallSummary     ─0..1 CoachingScorecard ─* DimensionScore(+evidence)

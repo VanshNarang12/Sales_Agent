@@ -7,7 +7,7 @@ company's approved knowledge base, and surfaces a short, cited coaching suggesti
 the moment** — all with consent and compliance built in. (The rep triggers help with
 one click; there's no covert auto-listening deciding when to interrupt.)
 
-> **Positioning:** _"Your sales playbook, battlecards, case studies, and product
+> **Positioning:** _"Your sales playbook, case studies, and product
 > docs — live in the call, exactly when the buyer asks."_
 >
 > **Not:** a hidden/undisclosed "cheat" overlay. We win on **trust, accuracy,
@@ -25,8 +25,8 @@ moment of doubt.
 
 > **"Never lose a deal because a rep forgot the right answer."**
 
-Every suggestion is grounded in the team's approved docs, battlecards, pricing,
-and case studies — with citations.
+Every suggestion is grounded in the team's approved, uploaded docs — pricing,
+case studies, competitor comparisons — with citations.
 
 ## Target wedge (ICP)
 
@@ -40,8 +40,8 @@ and case studies — with citations.
 
 1. **Real-time objection-handling cards** — the rep clicks **Suggest** on an objection
    and gets the approved, cited rebuttal.
-2. **Live competitor battlecards** — click **Suggest** after a competitor comes up and
-   pull the battlecard for that competitor.
+2. **Live competitor answers** — click **Suggest** after a competitor comes up and
+   pull the team's competitor comparison from the uploaded docs.
 3. **"Do-not-say" guardrails** — every suggestion the copilot produces is vetted before
    it's shown, so it never tells a rep to over-promise on pricing, legal, security, or
    implementation. (A guardrail on *our own answers* — not a listener on the rep's

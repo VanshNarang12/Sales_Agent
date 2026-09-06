@@ -85,11 +85,11 @@ answer = Stage 6.)
 *Why now: retrieval and generation need approved content to cite.*
 
 - [ ] **4.1** Document upload (PDF/DOCX/PPTX/TXT/MD) — `4.1`
-- [ ] **4.2** Manual battlecard / objection-handler entry (structured) — `4.2`
+- [ ] ~~**4.2** Manual battlecard / objection-handler entry (structured) — `4.2`~~ *(dropped 2026-08-30 — documents-only KB; all answers come from uploaded files)*
 - [ ] **4.3** Automatic chunking + embedding pipeline — `4.5`
 
-**Expectation:** a customer can load their docs + battlecards and they're indexed for
-search.
+**Expectation:** a customer can load their docs and they're indexed for search
+(documents-only KB — no separate battlecard entity).
 
 ---
 
@@ -160,7 +160,7 @@ skip or reorder this ahead of live customer use.
 *Why now: turns a generic copilot into a sales copilot — the killer features.*
 
 - [ ] **9.1** Real-time objection-handling cards (killer #1) — `8.1`
-- [ ] **9.2** Competitor battlecards — pulled via Suggest (killer #2) — `8.2`
+- [ ] **9.2** Competitor answers — pulled via Suggest from uploaded docs (killer #2) — `8.2` *(battlecard entity dropped 2026-08-30; competitor content lives in uploaded documents)*
 - [ ] **9.3** "Do-not-say" guardrail on generated cards (killer #3) — `6.5` / `8.3`
 - [ ] **9.4** Do-not-say rule match on the copilot's output (Guardrail Service) — `3.6`
 - [ ] **9.5** Product Q&A answers (cited) — `8.4`
@@ -169,7 +169,7 @@ skip or reorder this ahead of live customer use.
 - [ ] **9.8** Stall-line suggestions — `6.7`
 
 **Expectation:** the three headline features work: objection cards and competitor
-battlecards pulled via the Suggest button, and the do-not-say guardrail vetting every
+competitor answers pulled via the Suggest button, and the do-not-say guardrail vetting every
 generated card — all cited.
 
 ---
@@ -190,8 +190,8 @@ what the KB couldn't answer.
 *Why now: pilots need a way to create/govern the guidance.*
 
 - [ ] **11.1** Admin playbook builder — `12.1`
-- [ ] **11.2** Objection → response mapping editor — `12.2`
-- [ ] **11.3** Battlecard editor (per competitor) — `12.3`
+- [ ] ~~**11.2** Objection → response mapping editor — `12.2`~~ *(dropped 2026-08-30 — no structured entries; objection answers live in uploaded docs)*
+- [ ] ~~**11.3** Battlecard editor (per competitor) — `12.3`~~ *(dropped 2026-08-30 — no battlecard entity)*
 - [ ] **11.4** "Do-not-say" rules editor — `12.4`
 
 **Expectation:** a sales leader can author and control exactly what reps see live.
@@ -262,7 +262,7 @@ what the KB couldn't answer.
 - [ ] **16.3** Document versioning — `4.6`
 - [ ] **16.4** Admin approval / publish workflow for content — `4.7`
 - [ ] **16.5** Source tagging / categorization — `4.8`
-- [ ] **16.6** Bulk import & de-duplication — `4.12`
+- [ ] **16.6** Bulk import & de-duplication — `4.12` (design decided 2026-09-05: UI upload → S3/MinIO → puller → queue → one-by-one workers, flat RAM under mass uploads; see knowledge_base_techdoc.md §5/§13)
 - [ ] **16.7** Freshness / version-aware retrieval — `5.10`
 
 ---
