@@ -71,7 +71,7 @@ is the first measurable quality gate.
 - [x] **3.1** Suggest-button trigger (inbound WS click; the only trigger) — `3.1` (WS `{"type":"suggest"}` + desktop-client button)
 - [x] **3.2** Last-N-minutes transcript window capture (configurable) — `3.2` (Redis transcript store: complete call, sliding TTL, window read at click; `SUGGEST_LOOKBACK_MS`; see `transcript_store_techdoc.md`)
 - [ ] ~~**3.3** Light-LLM query builder (window → clean search query) — `3.3`~~ *(dropped — the raw window is the query)*
-- [x] **3.4** `SuggestRequest → BuiltQuery` contract handed to retrieval — `3.4` (consumer is a dev console sink until Stage 5)
+- [x] **3.4** `SuggestRequest → BuiltQuery` contract handed to retrieval — `3.4` (2026-09-09: consumed by real retrieval — extract → search → WS `suggestion` message)
 - [~] **3.5** Button rate-limit / in-flight guard — `3.11` (in-flight guard + client cooldown live; server min-interval pending)
 
 **Expectation:** a Suggest click reliably captures the recent transcript window and
@@ -84,9 +84,9 @@ answer = Stage 6.)
 ## Stage 4 — Knowledge Base, minimum (the grounding source)
 *Why now: retrieval and generation need approved content to cite.*
 
-- [ ] **4.1** Document upload (PDF/DOCX/PPTX/TXT/MD) — `4.1`
+- [~] **4.1** Document upload (PDF/DOCX/PPTX/TXT/MD) — `4.1` (`POST /v1/documents` live; txt/md extraction only, pdf/docx/pptx pending — knowledge_base_techdoc.md §13)
 - [ ] ~~**4.2** Manual battlecard / objection-handler entry (structured) — `4.2`~~ *(dropped 2026-08-30 — documents-only KB; all answers come from uploaded files)*
-- [ ] **4.3** Automatic chunking + embedding pipeline — `4.5`
+- [x] **4.3** Automatic chunking + embedding pipeline — `4.5` (recursive chunker + Groq nomic embeddings + pgvector store)
 
 **Expectation:** a customer can load their docs and they're indexed for search
 (documents-only KB — no separate battlecard entity).
@@ -96,11 +96,11 @@ answer = Stage 6.)
 ## Stage 5 — Retrieval & Grounding (the lookup)
 *Why now: turns the Suggest-built query + KB into the right snippet.*
 
-- [ ] **5.1** Vector / semantic search over the KB — `5.1`
-- [~] **5.2** LLM query/objection extraction — **mandatory MVP step**: every Suggest window passes through a small LLM call that extracts "what is the prospect asking/objecting to" before embedding — `5.3` (extraction step + connector built 2026-08-27; wired to console until search exists)
-- [ ] **5.3** Retrieval confidence scoring — `5.6`
-- [ ] **5.4** Mandatory source citation on every answer — `5.4`
-- [ ] **5.5** "Answer only from approved docs" mode (refuse if no source) — `5.5`
+- [x] **5.1** Vector / semantic search over the KB — `5.1` (2026-09-09: `internal/retrieval/search.go`, cosine over HNSW; see rag_retrieval_techdoc.md)
+- [x] **5.2** LLM query/objection extraction — **mandatory MVP step**: every Suggest window passes through a small LLM call that extracts "what is the prospect asking/objecting to" before embedding — `5.3` (2026-09-09: now feeds real search, console sink removed)
+- [x] **5.3** Retrieval confidence scoring — `5.6` (cosine similarity on every hit)
+- [x] **5.4** Mandatory source citation on every answer — `5.4` (every hit carries document title + heading + id)
+- [x] **5.5** "Answer only from approved docs" mode (refuse if no source) — `5.5` (hits below `RETRIEVAL_MIN_SCORE` dropped; empty result = honest "no answer". Card-level refusal is Stage 6.7)
 
 **Expectation:** given the Suggest-built query, the system returns the best approved
 snippet with a citation — or honestly returns nothing. This is the anti-hallucination core.

@@ -151,8 +151,9 @@ dashboards + the hot-path latency SLO panels are scaffolded for Stage 1 to popul
 - 🔴 **SECURITY, OPEN (deferred 2026-09-05): RLS is currently bypassed on Neon.**
   The app connects as `neondb_owner`, which has `BYPASSRLS` (Neon `neon_superuser`
   member) — Postgres skips ALL row-level security for it, so tenant isolation does
-  not exist in practice. Proven by `internal/kb/store_test.go` (tenant B read tenant
-  A's chunks; run with `TEST_DATABASE_URL`). **Fix (standard Neon pattern):** create
+  not exist in practice. Proven by `internal/kb/store_test.go` and (2026-09-09)
+  `internal/retrieval/search_test.go` `TestSearchTenantIsolation` — tenant B's
+  *search* also returns tenant A's chunks (run with `TEST_DATABASE_URL`). **Fix (standard Neon pattern):** create
   `app_user` via SQL with `LOGIN NOBYPASSRLS` + `GRANT USAGE ON SCHEMA public` +
   `GRANT SELECT/INSERT/UPDATE/DELETE ON ALL TABLES` + `ALTER DEFAULT PRIVILEGES`;
   point the app's `DATABASE_URL` at it; keep `neondb_owner` for migrations only.

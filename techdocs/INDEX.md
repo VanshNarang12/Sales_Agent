@@ -67,7 +67,7 @@ Status: `planned` · `in-progress` · `done`.
 | [`transcript_store_techdoc.md`](./transcript_store_techdoc.md) — Redis live-transcript store (complete call, sliding TTL) | Stage 3 | `3.2` | §7.2 | done |
 | [`query_extraction_techdoc.md`](./query_extraction_techdoc.md) — LLM ask-extraction (retrieval step 1) + `llm.Completer` provider layer | Stage 5 (early) / 6.1 | `5.3`,`18.6` | §7.3 | in-progress |
 | [`knowledge_base_techdoc.md`](./knowledge_base_techdoc.md) — upload, chunking, embeddings, pgvector store (documents-only; battlecards dropped) | Stage 4 | `4.1`,`4.5` | §7.3,§9 | in-progress |
-| _rag_retrieval_techdoc.md_ | Stage 5 | `5.1`,`5.3`–`5.6` | §7.3 | planned |
+| [`rag_retrieval_techdoc.md`](./rag_retrieval_techdoc.md) — vector search, confidence gate, citations, suggest wiring | Stage 5 | `5.1`,`5.4`–`5.6` | §7.3 | done |
 | _suggestion_generation_techdoc.md_ | Stage 6 | `6.1`–`6.4`,`6.8`,`6.12`,`18.6`,`18.9` | §7.4 | planned |
 | _overlay_ui_techdoc.md_ | Stage 7 | `7.1`–`7.5`,`7.7`,`7.7a`,`7.9`,`20.5` | §10 | planned |
 | _consent_compliance_techdoc.md_ | Stage 8 / 22 | `14.1`–`14.7`,`14.12` | §15 | planned |

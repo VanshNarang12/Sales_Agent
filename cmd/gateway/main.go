@@ -10,6 +10,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
 
 	"github.com/VanshNarang12/sales-agent/internal/detect"
@@ -69,11 +70,13 @@ func run(log *slog.Logger) error {
 	sttMgr := buildSTT(ctx, cfg, log)
 	detectEng := buildDetect(ctx, cfg, log)
 	extractor := buildExtract(ctx, cfg, log)
-	ingester := buildIngest(ctx, cfg, log)
+	pool, embedder := buildKB(ctx, cfg, log)
+	ingester := buildIngest(pool, embedder, cfg, log)
+	searcher := buildSearch(pool, embedder, cfg, log)
 
 	srv := &http.Server{
 		Addr:              cfg.HTTPAddr,
-		Handler:           gateway.New(cfg, signingKey, sttMgr, detectEng, extractor, ingester, log).Handler(),
+		Handler:           gateway.New(cfg, signingKey, sttMgr, detectEng, extractor, searcher, ingester, log).Handler(),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
@@ -91,6 +94,7 @@ func run(log *slog.Logger) error {
 	defer cancel()
 	return srv.Shutdown(shutdownCtx)
 }
+
 // buildDetect wires the suggestion trigger to the Redis transcript store. Suggest
 // needs the store: an unreachable Redis at boot disables the trigger (audio still runs).
 func buildDetect(ctx context.Context, cfg *config.Config, log *slog.Logger) *detect.Engine {
@@ -139,13 +143,14 @@ func buildExtract(ctx context.Context, cfg *config.Config, log *slog.Logger) *re
 	return retrieval.NewExtractor(model)
 }
 
-// buildIngest wires Stage-4 upload: Neon pool + embedder + Ingester. Any missing
-// piece ⇒ nil ⇒ POST /v1/documents answers 503; live calls unaffected.
-func buildIngest(ctx context.Context, cfg *config.Config, log *slog.Logger) gateway.DocumentIngester {
+// buildKB connects the KB dependencies shared by ingest (Stage 4) and search
+// (Stage 5): the Neon pool and the embedder. Either may come back nil; each
+// consumer degrades on its own, live calls unaffected.
+func buildKB(ctx context.Context, cfg *config.Config, log *slog.Logger) (*pgxpool.Pool, embed.Embedder) {
 	pool, err := db.Connect(ctx, cfg.DatabaseURL)
 	if err != nil {
-		log.Warn("ingest disabled: database unreachable", "err", err)
-		return nil
+		log.Warn("KB disabled: database unreachable", "err", err)
+		return nil, nil
 	}
 	var apiKey string
 	if k, err := (secrets.EnvStore{}).Get(ctx, secrets.KeyOpenAIAPI); err == nil {
@@ -160,11 +165,30 @@ func buildIngest(ctx context.Context, cfg *config.Config, log *slog.Logger) gate
 		BatchSize: cfg.EmbedBatchSize,
 	})
 	if err != nil {
-		log.Warn("ingest disabled: embedder", "err", err)
+		log.Warn("KB disabled: embedder", "err", err)
+		return pool, nil
+	}
+	return pool, embedder
+}
+
+// buildIngest wires Stage-4 upload. Missing deps ⇒ nil ⇒ POST /v1/documents answers 503.
+func buildIngest(pool *pgxpool.Pool, embedder embed.Embedder, cfg *config.Config, log *slog.Logger) gateway.DocumentIngester {
+	if pool == nil || embedder == nil {
+		log.Warn("ingest disabled: missing KB dependencies")
 		return nil
 	}
 	log.Info("ingest enabled", "embed_provider", cfg.EmbedProvider, "embed_model", cfg.EmbedModel)
 	return kb.NewIngester(embedder, kb.NewStore(pool), cfg.ChunkTargetTokens, cfg.ChunkOverlapTokens)
+}
+
+// buildSearch wires Stage-5 retrieval. Missing deps ⇒ nil ⇒ Suggest logs the ask only.
+func buildSearch(pool *pgxpool.Pool, embedder embed.Embedder, cfg *config.Config, log *slog.Logger) *retrieval.Searcher {
+	if pool == nil || embedder == nil {
+		log.Warn("search disabled: Suggest will log the ask only")
+		return nil
+	}
+	log.Info("retrieval search enabled", "top_k", cfg.RetrievalTopK, "min_score", cfg.RetrievalMinScore)
+	return retrieval.NewSearcher(embedder, pool, cfg.RetrievalTopK, cfg.RetrievalMinScore)
 }
 
 func buildSTT(ctx context.Context, cfg *config.Config, log *slog.Logger) *stt.Manager {

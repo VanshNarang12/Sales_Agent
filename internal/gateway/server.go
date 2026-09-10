@@ -25,12 +25,13 @@ type Server struct {
 	stt        *stt.Manager
 	detect     *detect.Engine
 	extract    *retrieval.Extractor
+	search     *retrieval.Searcher
 	ingest     DocumentIngester
 	log        *slog.Logger
 }
 
-func New(cfg *config.Config, signingKey string, sttMgr *stt.Manager, detectEng *detect.Engine, extractor *retrieval.Extractor, ingester DocumentIngester, log *slog.Logger) *Server {
-	return &Server{cfg: cfg, signingKey: signingKey, stt: sttMgr, detect: detectEng, extract: extractor, ingest: ingester, log: log}
+func New(cfg *config.Config, signingKey string, sttMgr *stt.Manager, detectEng *detect.Engine, extractor *retrieval.Extractor, searcher *retrieval.Searcher, ingester DocumentIngester, log *slog.Logger) *Server {
+	return &Server{cfg: cfg, signingKey: signingKey, stt: sttMgr, detect: detectEng, extract: extractor, search: searcher, ingest: ingester, log: log}
 }
 
 // Handler builds the HTTP/WS routes with telemetry and auth wired in.

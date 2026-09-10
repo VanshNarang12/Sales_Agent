@@ -321,8 +321,10 @@ Named, not valued:
   and measure query quality on recorded calls; this is the main knob.
 - **Swap/downgrade a model:** edit the `model_configs` doc for `query_builder` (or
   `answer`); no code change (D5). Add a provider = register a constructor + insert a doc.
-- **Wire retrieval (Stage 5):** replace the console-log `EmitFunc` with the retrieval call
-  — `BuiltQuery` is already the retrieval input (D6).
+- ~~**Wire retrieval (Stage 5):** replace the console-log `EmitFunc` with the retrieval call~~
+  **Done 2026-09-09** — `querySink` (gateway `ws.go`) runs extract → search → WS
+  `suggestion` message; see `rag_retrieval_techdoc.md`. Console fallback remains only
+  when extraction/search are disabled (missing key/DB).
 - **Do NOT add automatic surfacing.** No proactive/auto-detect layer — this is a
   deliberate product decision (D1), not a gap to fill. New live help = new ways to
   trigger the button (e.g. hotkeys, a typed Ask box), never a listener that fires on its

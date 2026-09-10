@@ -68,6 +68,10 @@ type Config struct {
 	ChunkTargetTokens  int // approximate tokens (chars ÷ 4)
 	ChunkOverlapTokens int
 	MaxUploadMB        int
+
+	// Retrieval search (Stage 5) — rag_retrieval_techdoc.md §9.
+	RetrievalTopK     int
+	RetrievalMinScore float64 // cosine-similarity gate; below it a hit is dropped (5.5)
 }
 
 // Load reads configuration from the environment and validates it.
@@ -104,6 +108,9 @@ func Load(serviceName string) (*Config, error) {
 		ChunkTargetTokens:  getenvInt("CHUNK_TARGET_TOKENS", 450),
 		ChunkOverlapTokens: getenvInt("CHUNK_OVERLAP_TOKENS", 60),
 		MaxUploadMB:        getenvInt("MAX_UPLOAD_MB", 15),
+
+		RetrievalTopK:     getenvInt("RETRIEVAL_TOP_K", 5),
+		RetrievalMinScore: getenvFloat("RETRIEVAL_MIN_SCORE", 0.5),
 	}
 	// AUTH_DISABLED is honored only in dev — never bypass auth in staging/prod.
 	if c.Env != "dev" {
@@ -146,6 +153,16 @@ func getenvInt(key string, fallback int) int {
 	if v := os.Getenv(key); v != "" {
 		if n, err := strconv.Atoi(v); err == nil {
 			return n
+		}
+	}
+	return fallback
+}
+
+// getenvFloat reads a float env var, returning fallback when unset or unparseable.
+func getenvFloat(key string, fallback float64) float64 {
+	if v := os.Getenv(key); v != "" {
+		if f, err := strconv.ParseFloat(v, 64); err == nil {
+			return f
 		}
 	}
 	return fallback

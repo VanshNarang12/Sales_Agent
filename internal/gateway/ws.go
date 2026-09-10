@@ -17,6 +17,7 @@ import (
 
 	"github.com/VanshNarang12/sales-agent/internal/detect"
 	"github.com/VanshNarang12/sales-agent/internal/platform/tenancy"
+	"github.com/VanshNarang12/sales-agent/internal/retrieval"
 	"github.com/VanshNarang12/sales-agent/internal/stt"
 )
 
@@ -49,6 +50,15 @@ type helloMsg struct {
 	Encoding     string `json:"encoding"`
 	Channels     int    `json:"channels"`
 	FrameSamples int    `json:"frameSamples"`
+}
+
+// suggestionMsg answers a Suggest click. Empty hits means: searched, nothing above
+// the confidence threshold — the client shows "no answer in your docs", never a
+// made-up card (5.5). Empty ask means the window held no question/objection.
+type suggestionMsg struct {
+	Type string                   `json:"type"` // always "suggestion"
+	Ask  string                   `json:"ask"`
+	Hits []retrieval.SearchResult `json:"hits"`
 }
 
 type transcriptMsg struct {
@@ -92,7 +102,7 @@ func (s *Server) handleRealtime(w http.ResponseWriter, r *http.Request) {
 		sessionID := newSessionID()
 		sink := s.transcriptSink(conn, sess)
 		if s.detect != nil {
-			sess.detect = s.detect.StartSession(r.Context(), string(tid), sessionID, s.querySink())
+			sess.detect = s.detect.StartSession(r.Context(), string(tid), sessionID, s.querySink(conn, sess))
 			sink = composeSinks(sink, sess.detect.OnTranscript)
 		}
 		sess.stt = s.stt.StartSession(r.Context(), string(tid), sessionID, sink)
@@ -200,8 +210,9 @@ func composeSinks(sinks ...stt.EventFunc) stt.EventFunc {
 }
 
 // querySink runs on the Suggest goroutine (off the WS read loop); the in-flight
-// guard stays held during extraction, so clicks can't stack LLM calls.
-func (s *Server) querySink() detect.EmitFunc {
+// guard stays held through extraction + search, so clicks can't stack LLM calls.
+// Flow: window → extract ask → embed+search KB → "suggestion" WS message.
+func (s *Server) querySink(conn *websocket.Conn, sess *session) detect.EmitFunc {
 	return func(q detect.BuiltQuery) {
 		if s.extract == nil {
 			fmt.Printf("[suggest] session=%s query=%q\n", q.SessionID, q.Query)
@@ -210,14 +221,43 @@ func (s *Server) querySink() detect.EmitFunc {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		ask, err := s.extract.Extract(ctx, q)
-		switch {
-		case err != nil:
+		if err != nil {
 			s.log.Warn("extraction failed; no suggestion", "err", err, "session", q.SessionID)
-		case ask == "":
-			s.log.Info("suggest: no ask in window", "session", q.SessionID)
-		default:
-			fmt.Printf("[suggest] session=%s ask=%q\n", q.SessionID, ask)
+			return
 		}
+		if ask == "" {
+			s.log.Info("suggest: no ask in window", "session", q.SessionID)
+			s.sendSuggestion(conn, sess, q.SessionID, "", nil)
+			return
+		}
+		if s.search == nil {
+			fmt.Printf("[suggest] session=%s ask=%q\n", q.SessionID, ask)
+			return
+		}
+		// Search needs the tenant in ctx: RLS scopes the SQL to this org's chunks.
+		hits, err := s.search.Search(tenancy.With(ctx, tenancy.TenantID(q.TenantID)), ask)
+		if err != nil {
+			s.log.Warn("search failed; no suggestion", "err", err, "session", q.SessionID)
+			return
+		}
+		s.log.Info("suggest: searched", "session", q.SessionID, "hits", len(hits))
+		s.sendSuggestion(conn, sess, q.SessionID, ask, hits)
+	}
+}
+
+func (s *Server) sendSuggestion(conn *websocket.Conn, sess *session, sessionID, ask string, hits []retrieval.SearchResult) {
+	if hits == nil {
+		hits = []retrieval.SearchResult{} // marshal as [], not null
+	}
+	b, err := json.Marshal(suggestionMsg{Type: "suggestion", Ask: ask, Hits: hits})
+	if err != nil {
+		return
+	}
+	sess.writeMu.Lock()
+	err = conn.WriteMessage(websocket.TextMessage, b)
+	sess.writeMu.Unlock()
+	if err != nil {
+		s.log.Warn("suggestion write failed", "err", err, "session", sessionID)
 	}
 }
 
