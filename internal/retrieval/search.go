@@ -58,10 +58,18 @@ func (s *Searcher) Search(ctx context.Context, ask string) ([]SearchResult, erro
 	if err != nil {
 		return nil, fmt.Errorf("search embed: %w", err)
 	}
+	return s.SearchVec(ctx, vecs[0], s.topK)
+}
 
+// SearchVec searches with an already-embedded query — for callers (prep chat)
+// that embed once and search several tables with the same vector.
+func (s *Searcher) SearchVec(ctx context.Context, vec []float32, topK int) ([]SearchResult, error) {
+	if topK <= 0 {
+		topK = s.topK
+	}
 	var hits []SearchResult
-	err = db.WithTenantTx(ctx, s.pool, func(tx pgx.Tx) error {
-		rows, err := tx.Query(ctx, searchSQL, vectorLiteral(vecs[0]), s.topK)
+	err := db.WithTenantTx(ctx, s.pool, func(tx pgx.Tx) error {
+		rows, err := tx.Query(ctx, searchSQL, vectorLiteral(vec), topK)
 		if err != nil {
 			return err
 		}

@@ -12,7 +12,7 @@ import (
 )
 
 // One adapter covers every vendor speaking the OpenAI embeddings API:
-// Groq (our default, serving nomic-embed-text-v1.5), OpenAI, Gemini, Ollama, vLLM.
+// Gemini (our default), OpenAI, Ollama, vLLM. Groq serves no embedding models.
 func init() {
 	Register("openai_compatible", newOpenAICompatible)
 }
@@ -29,6 +29,11 @@ type openAIEmbedder struct {
 	model   string
 	dims    int
 	batch   int
+	// isNomic changes two behaviors. Nomic models: need the "search_document: " /
+	// "search_query: " label before each text, and have a fixed 768 output (the
+	// "dimensions" request field may be rejected). Other models (Gemini, OpenAI):
+	// no label — they'd embed it as literal text — and must be told "dimensions".
+	isNomic bool
 }
 
 func newOpenAICompatible(cfg Config) (Embedder, error) {
@@ -47,18 +52,23 @@ func newOpenAICompatible(cfg Config) (Embedder, error) {
 		batch = defaultEmbedBatchSize
 	}
 	return &openAIEmbedder{
-		http:    &http.Client{Timeout: 60 * time.Second},
-		baseURL: strings.TrimRight(base, "/"),
-		apiKey:  cfg.APIKey, // may be empty for local servers (Ollama/vLLM)
-		model:   cfg.Model,
-		dims:    cfg.Dims,
-		batch:   batch,
+		http:      &http.Client{Timeout: 60 * time.Second},
+		baseURL:   strings.TrimRight(base, "/"),
+		apiKey:    cfg.APIKey, // may be empty for local servers (Ollama/vLLM)
+		model:     cfg.Model,
+		dims:      cfg.Dims,
+		batch:     batch,
+		isNomic: strings.Contains(strings.ToLower(cfg.Model), "nomic"),
 	}, nil
 }
 
 type embedRequest struct {
 	Model string   `json:"model"`
 	Input []string `json:"input"`
+	// Dimensions asks the vendor for vectors of this exact size (Gemini defaults to
+	// 3072, OpenAI v3 to 1536 — both must be told 768). Omitted for nomic models:
+	// their output is fixed at 768 and their servers may reject the field.
+	Dimensions int `json:"dimensions,omitempty"`
 }
 
 type embedResponse struct {
@@ -77,7 +87,11 @@ func (e *openAIEmbedder) Embed(ctx context.Context, prefix Prefix, texts []strin
 	}
 	prefixed := make([]string, len(texts))
 	for i, t := range texts {
-		prefixed[i] = string(prefix) + t
+		if e.isNomic {
+			prefixed[i] = string(prefix) + t
+		} else {
+			prefixed[i] = t
+		}
 	}
 
 	out := make([][]float32, 0, len(prefixed))
@@ -93,7 +107,11 @@ func (e *openAIEmbedder) Embed(ctx context.Context, prefix Prefix, texts []strin
 }
 
 func (e *openAIEmbedder) embedBatch(ctx context.Context, texts []string) ([][]float32, error) {
-	body, err := json.Marshal(embedRequest{Model: e.model, Input: texts})
+	reqBody := embedRequest{Model: e.model, Input: texts}
+	if !e.isNomic {
+		reqBody.Dimensions = e.dims
+	}
+	body, err := json.Marshal(reqBody)
 	if err != nil {
 		return nil, fmt.Errorf("embed: %w", err)
 	}

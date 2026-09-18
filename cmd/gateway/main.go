@@ -13,6 +13,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
 
+	"github.com/VanshNarang12/sales-agent/internal/customer"
 	"github.com/VanshNarang12/sales-agent/internal/detect"
 	"github.com/VanshNarang12/sales-agent/internal/embed"
 	"github.com/VanshNarang12/sales-agent/internal/gateway"
@@ -22,9 +23,11 @@ import (
 	"github.com/VanshNarang12/sales-agent/internal/platform/db"
 	"github.com/VanshNarang12/sales-agent/internal/platform/secrets"
 	"github.com/VanshNarang12/sales-agent/internal/platform/telemetry"
+	"github.com/VanshNarang12/sales-agent/internal/postcall"
 	"github.com/VanshNarang12/sales-agent/internal/retrieval"
 	"github.com/VanshNarang12/sales-agent/internal/stt"
 	"github.com/VanshNarang12/sales-agent/internal/stt/deepgram"
+	"github.com/VanshNarang12/sales-agent/internal/suggest"
 	"github.com/VanshNarang12/sales-agent/internal/transcript"
 )
 
@@ -68,15 +71,27 @@ func run(log *slog.Logger) error {
 	}()
 
 	sttMgr := buildSTT(ctx, cfg, log)
-	detectEng := buildDetect(ctx, cfg, log)
+	tstore := buildTranscriptStore(ctx, cfg, log)
+	detectEng := buildDetect(cfg, tstore, log)
 	extractor := buildExtract(ctx, cfg, log)
 	pool, embedder := buildKB(ctx, cfg, log)
 	ingester := buildIngest(pool, embedder, cfg, log)
 	searcher := buildSearch(pool, embedder, cfg, log)
+	generator := buildSuggest(ctx, cfg, log)
+	summarizer := buildPostcall(ctx, cfg, log)
+	var pcStore *postcall.Store
+	var custStore *customer.Store
+	if pool != nil {
+		pcStore = postcall.NewStore(pool)
+		custStore = customer.NewStore(pool)
+	} else {
+		log.Warn("summary persistence disabled: no database")
+	}
+	chat := buildChat(ctx, cfg, custStore, searcher, embedder, log)
 
 	srv := &http.Server{
 		Addr:              cfg.HTTPAddr,
-		Handler:           gateway.New(cfg, signingKey, sttMgr, detectEng, extractor, searcher, ingester, log).Handler(),
+		Handler:           gateway.New(cfg, signingKey, sttMgr, detectEng, extractor, searcher, generator, ingester, tstore, summarizer, pcStore, embedder, custStore, chat, log).Handler(),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
@@ -95,24 +110,100 @@ func run(log *slog.Logger) error {
 	return srv.Shutdown(shutdownCtx)
 }
 
-// buildDetect wires the suggestion trigger to the Redis transcript store. Suggest
-// needs the store: an unreachable Redis at boot disables the trigger (audio still runs).
-func buildDetect(ctx context.Context, cfg *config.Config, log *slog.Logger) *detect.Engine {
+// buildTranscriptStore connects the Redis live-transcript store, shared by the
+// Suggest trigger (window reads) and the post-call summarizer (full reads).
+// Unreachable Redis at boot ⇒ nil ⇒ both degrade, audio still runs.
+func buildTranscriptStore(ctx context.Context, cfg *config.Config, log *slog.Logger) *transcript.Store {
 	opts, err := redis.ParseURL(cfg.RedisURL)
 	if err != nil {
-		log.Warn("suggest disabled: bad REDIS_URL", "err", err)
+		log.Warn("transcript store disabled: bad REDIS_URL", "err", err)
 		return nil
 	}
 	rdb := redis.NewClient(opts)
 	pingCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
 	if err := rdb.Ping(pingCtx).Err(); err != nil {
-		log.Warn("suggest disabled: redis unreachable", "err", err)
+		log.Warn("transcript store disabled: redis unreachable", "err", err)
 		return nil
 	}
-	store := transcript.New(rdb, time.Duration(cfg.TranscriptTTLSeconds)*time.Second)
 	log.Info("transcript store enabled", "ttl_s", cfg.TranscriptTTLSeconds, "lookback_ms", cfg.SuggestLookbackMs)
+	return transcript.New(rdb, time.Duration(cfg.TranscriptTTLSeconds)*time.Second)
+}
+
+// buildDetect wires the suggestion trigger to the transcript store. No store ⇒
+// Suggest disabled (audio still runs).
+func buildDetect(cfg *config.Config, store *transcript.Store, log *slog.Logger) *detect.Engine {
+	if store == nil {
+		log.Warn("suggest disabled: no transcript store")
+		return nil
+	}
 	return detect.NewEngine(log, store, int64(cfg.SuggestLookbackMs))
+}
+
+// buildChat wires the prep chat (10.8). Any missing dependency ⇒ nil ⇒ the chat
+// endpoint answers 503; timeline reads and calls are unaffected.
+func buildChat(ctx context.Context, cfg *config.Config, custStore *customer.Store, searcher *retrieval.Searcher, embedder embed.Embedder, log *slog.Logger) *customer.Chat {
+	if custStore == nil || searcher == nil || embedder == nil {
+		log.Warn("prep chat disabled: missing DB/search/embedder")
+		return nil
+	}
+	secretKey := map[string]string{
+		"anthropic":         secrets.KeyAnthropicAPI,
+		"openai_compatible": secrets.KeyOpenAIAPI,
+	}[cfg.LLMChatProvider]
+	var apiKey string
+	if secretKey != "" {
+		if k, err := (secrets.EnvStore{}).Get(ctx, secretKey); err == nil {
+			apiKey = k
+		}
+	}
+	model, err := llm.New(llm.Config{
+		Provider:  cfg.LLMChatProvider,
+		Model:     cfg.LLMChatModel,
+		APIKey:    apiKey,
+		BaseURL:   cfg.LLMChatBaseURL,
+		MaxTokens: int64(cfg.LLMChatMaxTokens),
+	})
+	if err != nil {
+		log.Warn("prep chat disabled", "err", err)
+		return nil
+	}
+	log.Info("prep chat enabled", "provider", cfg.LLMChatProvider, "model", cfg.LLMChatModel,
+		"recent", cfg.ChatRecentSummaries, "topk_summaries", cfg.ChatTopKSummaries, "topk_chunks", cfg.ChatTopKChunks)
+	return customer.NewChat(model, embedder, custStore, searcher, customer.ChatConfig{
+		RecentSummaries: cfg.ChatRecentSummaries,
+		TopKSummaries:   cfg.ChatTopKSummaries,
+		TopKChunks:      cfg.ChatTopKChunks,
+		MaxTurns:        cfg.ChatMaxTurns,
+	})
+}
+
+// buildPostcall wires the Stage-10 summarizer. No key / unknown provider ⇒ nil ⇒
+// calls end without a summary, everything else unaffected.
+func buildPostcall(ctx context.Context, cfg *config.Config, log *slog.Logger) *postcall.Summarizer {
+	secretKey := map[string]string{
+		"anthropic":         secrets.KeyAnthropicAPI,
+		"openai_compatible": secrets.KeyOpenAIAPI,
+	}[cfg.LLMSummaryProvider]
+	var apiKey string
+	if secretKey != "" {
+		if k, err := (secrets.EnvStore{}).Get(ctx, secretKey); err == nil {
+			apiKey = k
+		}
+	}
+	model, err := llm.New(llm.Config{
+		Provider:  cfg.LLMSummaryProvider,
+		Model:     cfg.LLMSummaryModel,
+		APIKey:    apiKey,
+		BaseURL:   cfg.LLMSummaryBaseURL,
+		MaxTokens: int64(cfg.LLMSummaryMaxTokens),
+	})
+	if err != nil {
+		log.Warn("post-call summaries disabled", "err", err)
+		return nil
+	}
+	log.Info("post-call summaries enabled", "provider", cfg.LLMSummaryProvider, "model", cfg.LLMSummaryModel)
+	return postcall.NewSummarizer(model)
 }
 
 // buildExtract wires the LLM ask-extraction (retrieval step 1). No key / unknown
@@ -152,8 +243,11 @@ func buildKB(ctx context.Context, cfg *config.Config, log *slog.Logger) (*pgxpoo
 		log.Warn("KB disabled: database unreachable", "err", err)
 		return nil, nil
 	}
+	// EMBED_API_KEY first (embed vendor ≠ chat vendor, e.g. Gemini), else OPENAI_API_KEY.
 	var apiKey string
-	if k, err := (secrets.EnvStore{}).Get(ctx, secrets.KeyOpenAIAPI); err == nil {
+	if k, err := (secrets.EnvStore{}).Get(ctx, secrets.KeyEmbedAPI); err == nil {
+		apiKey = k
+	} else if k, err := (secrets.EnvStore{}).Get(ctx, secrets.KeyOpenAIAPI); err == nil {
 		apiKey = k
 	}
 	embedder, err := embed.New(embed.Config{
@@ -189,6 +283,34 @@ func buildSearch(pool *pgxpool.Pool, embedder embed.Embedder, cfg *config.Config
 	}
 	log.Info("retrieval search enabled", "top_k", cfg.RetrievalTopK, "min_score", cfg.RetrievalMinScore)
 	return retrieval.NewSearcher(embedder, pool, cfg.RetrievalTopK, cfg.RetrievalMinScore)
+}
+
+// buildSuggest wires Stage-6 card generation. No key / unknown provider ⇒ nil ⇒
+// Suggest still sends raw hits, just without a card (same degradation as extract).
+func buildSuggest(ctx context.Context, cfg *config.Config, log *slog.Logger) *suggest.Generator {
+	secretKey := map[string]string{
+		"anthropic":         secrets.KeyAnthropicAPI,
+		"openai_compatible": secrets.KeyOpenAIAPI,
+	}[cfg.LLMAnswerProvider]
+	var apiKey string
+	if secretKey != "" {
+		if k, err := (secrets.EnvStore{}).Get(ctx, secretKey); err == nil {
+			apiKey = k
+		}
+	}
+	model, err := llm.New(llm.Config{
+		Provider:  cfg.LLMAnswerProvider,
+		Model:     cfg.LLMAnswerModel,
+		APIKey:    apiKey,
+		BaseURL:   cfg.LLMAnswerBaseURL,
+		MaxTokens: int64(cfg.LLMAnswerMaxTokens),
+	})
+	if err != nil {
+		log.Warn("card generation disabled; Suggest will send raw hits only", "err", err)
+		return nil
+	}
+	log.Info("card generation enabled", "provider", cfg.LLMAnswerProvider, "model", cfg.LLMAnswerModel, "min_confidence", cfg.SuggestMinConfidence)
+	return suggest.NewGenerator(model)
 }
 
 func buildSTT(ctx context.Context, cfg *config.Config, log *slog.Logger) *stt.Manager {

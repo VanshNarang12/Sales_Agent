@@ -50,15 +50,24 @@ Flow after this stage: rep clicks Suggest → extraction produces the ask →
   file had no headings. This keeps a chunk meaningful (and citable) out of context.
 - **Tables stay whole** when we can detect them (MD tables; PDF tables if the
   parser exposes them). In plain text they just go through the normal splitter.
-- **nomic prefixes are mandatory.** The embedding model `nomic-embed-text-v1.5` is
-  trained with task prefixes: store chunks as `search_document: <text>`, embed
-  queries (Stage 5) as `search_query: <ask>`. Skipping them measurably hurts
-  accuracy. The adapter adds them; callers can't forget.
-- **Embeddings from Groq, behind a registry.** Same pattern as `internal/llm`
-  (interface + adapters + `Register`): new provider = one file + one line; switching
-  = env edit. Groq chosen because it's already our LLM vendor — one free key for
-  both. Fallbacks: local Ollama running the same nomic model (vectors stay
-  compatible), or Gemini/OpenAI (different model = full re-embed).
+- **Embeddings from Gemini (`gemini-embedding-001`, asked for 768 dims), behind a
+  registry.** Same pattern as `internal/llm` (interface + adapters + `Register`):
+  new provider = one file + one line; switching = env edit.
+  **CORRECTION 2026-09-12:** the original choice — Groq serving
+  `nomic-embed-text-v1.5` — never worked. Groq serves NO embedding models; its API
+  404s. The mistake shipped because all tests use a fake embedder; the first real
+  upload exposed it. Switched to Gemini's OpenAI-compatible endpoint
+  (`generativelanguage.googleapis.com/v1beta/openai`) with its own secret
+  `EMBED_API_KEY` (chat calls stay on Groq/`OPENAI_API_KEY`). Google's earlier
+  `text-embedding-004` is retired; `gemini-embedding-001` defaults to 3072 dims, so
+  the adapter sends `"dimensions": 768` to match the `vector(768)` column.
+  Rejected: local Ollama nomic (user rule: no local model downloads), Jina (extra
+  signup; Gemini fit the existing 768 schema with zero migration).
+- **nomic prefixes are nomic-only.** `nomic-embed-text-*` models are trained with
+  task prefixes (`search_document: <text>` for chunks, `search_query: <ask>` for
+  queries) and need them for accuracy. Other models (Gemini, OpenAI) would embed
+  the prefix as literal text and lose accuracy. The adapter decides by model name
+  (`isNomic`): prefixes on for nomic, off otherwise — callers can't get it wrong.
 - **Chunk size counted approximately (chars ÷ 4 ≈ tokens).** Exact counting needs a
   tokenizer dependency; chunk targets don't need that precision.
 - **Store: Neon Postgres + pgvector.** Already provisioned (pgvector 0.8.6 verified
@@ -73,7 +82,7 @@ Flow after this stage: rep clicks Suggest → extraction produces the ask →
 ```
 internal/embed/
   ├── embed.go         # Embedder interface + Config + Register/New (same shape as internal/llm)
-  ├── openai.go        # OpenAI-compatible /embeddings adapter (Groq); adds the nomic prefixes
+  ├── openai.go        # OpenAI-compatible /embeddings adapter (Gemini); nomic prefixes + dimensions by model
   └── *_test.go        # registry tests + fake-server adapter tests
 internal/kb/
   ├── chunker.go       # structure-if-any → recursive split → overlap → breadcrumb
@@ -91,7 +100,7 @@ internal/platform/config/config.go   # EMBED_*, CHUNK_* knobs
 ```
 NOW (simple, synchronous — decision 2026-09-05):
 POST /v1/documents (file ≤15 MB) ─► request-scoped buffer in RAM ─► extract text
-  ─► chunker ─► embed (Groq, batched: ≤64 chunks per API call, sequential batches)
+  ─► chunker ─► embed (Gemini, batched: ≤64 chunks per API call, sequential batches)
   ─► store: 1 kb_documents row + N kb_chunks rows via ONE bulk insert (pgx CopyFrom),
      one transaction — all-or-nothing, no half-indexed documents
   ─► respond {document_id, status, chunk_count}; buffer freed with the request
@@ -142,21 +151,23 @@ CREATE TABLE kb_chunks (
   control-plane only.
 
 ## 8. External dependencies
-- **Groq `/openai/v1/embeddings`** with `nomic-embed-text-v1.5`. Listed in Groq docs
-  (checked 2026-08-30); confirm once on the live console. If missing on free tier →
-  point `EMBED_BASE_URL` at local Ollama with the same model; vectors stay
-  compatible, nothing re-embeds.
+- **Gemini `/v1beta/openai/embeddings`** with `gemini-embedding-001` at 768 dims
+  (verified live 2026-09-12: key + model + dims all confirmed working by direct
+  curl). The 2026-08-30 note "listed in Groq docs" was wrong — Groq has no
+  embeddings endpoint; every real call 404s.
 - **Neon Postgres** (remote; pgvector 0.8.6) via `DATABASE_URL`.
 
 ## 9. Config & secrets
 - `EMBED_PROVIDER` (default `openai_compatible`)
-- `EMBED_MODEL` (default `nomic-embed-text-v1.5`)
-- `EMBED_BASE_URL` (default `https://api.groq.com/openai/v1`)
-- `EMBED_DIMS` (default `768`) — must match `vector(768)` in the migration. Changing
+- `EMBED_MODEL` (default `gemini-embedding-001`)
+- `EMBED_BASE_URL` (default `https://generativelanguage.googleapis.com/v1beta/openai`)
+- `EMBED_DIMS` (default `768`) — must match `vector(768)` in the migration; the
+  adapter sends it as the `dimensions` request field for non-nomic models. Changing
   the model later = new migration + re-embed everything. Known, accepted cost.
 - `CHUNK_TARGET_TOKENS` (default `450`), `CHUNK_OVERLAP_TOKENS` (default `60`) —
   approximate (chars ÷ 4). Tune only with Stage 13 eval data.
-- Secret: reuses `OPENAI_API_KEY` (the Groq key). No new secret.
+- Secret: `EMBED_API_KEY` (the Gemini key; embeddings only). Unset ⇒ falls back to
+  `OPENAI_API_KEY` for single-vendor setups.
 
 ## 10. How to extend
 - **New file type:** add one `extractText<Type>()` in `extract_text.go`. Everything
@@ -194,6 +205,14 @@ CREATE TABLE kb_chunks (
 | Semantic chunking | — | **rejected permanently** (54% vs 69%, 3–5x cost) — do not revisit |
 
 ## 14. Changelog
+- `2026-09-12` — **Embedding provider corrected: Groq → Gemini.** First live upload
+  502'd; direct curl proved Groq serves no embedding models (404, "model not
+  found") — the 2026-08-30 choice never worked, hidden by fake-embedder tests.
+  Now: `gemini-embedding-001` on Gemini's OpenAI-compatible endpoint, adapter sends
+  `dimensions: 768` (Gemini default is 3072), new `EMBED_API_KEY` secret with
+  `OPENAI_API_KEY` fallback, nomic prefixes now conditional on model (`isNomic`).
+  Verified live: key + model return 768-dim vectors. Ollama-local rejected (no
+  local downloads); Jina rejected (extra signup). — Vansh + Claude
 - `2026-08-31` — **Battlecards dropped entirely (`4.2` + Stage-11 editors 11.2/11.3).**
   Documents-only KB: one content type, one upload endpoint; `kind` column removed from
   the schema; killer features 9.1/9.2 now retrieve doc excerpts. Accepted trade-off

@@ -9,13 +9,18 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/VanshNarang12/sales-agent/internal/customer"
 	"github.com/VanshNarang12/sales-agent/internal/detect"
+	"github.com/VanshNarang12/sales-agent/internal/embed"
 	"github.com/VanshNarang12/sales-agent/internal/platform/auth"
 	"github.com/VanshNarang12/sales-agent/internal/platform/config"
 	"github.com/VanshNarang12/sales-agent/internal/platform/telemetry"
 	"github.com/VanshNarang12/sales-agent/internal/platform/tenancy"
+	"github.com/VanshNarang12/sales-agent/internal/postcall"
 	"github.com/VanshNarang12/sales-agent/internal/retrieval"
 	"github.com/VanshNarang12/sales-agent/internal/stt"
+	"github.com/VanshNarang12/sales-agent/internal/suggest"
+	"github.com/VanshNarang12/sales-agent/internal/transcript"
 )
 
 // Server holds gateway dependencies.
@@ -26,12 +31,19 @@ type Server struct {
 	detect     *detect.Engine
 	extract    *retrieval.Extractor
 	search     *retrieval.Searcher
+	suggest    *suggest.Generator
 	ingest     DocumentIngester
+	tstore     *transcript.Store
+	summarizer *postcall.Summarizer
+	pcStore    *postcall.Store
+	embedder   embed.Embedder
+	custStore  *customer.Store
+	chat       *customer.Chat
 	log        *slog.Logger
 }
 
-func New(cfg *config.Config, signingKey string, sttMgr *stt.Manager, detectEng *detect.Engine, extractor *retrieval.Extractor, searcher *retrieval.Searcher, ingester DocumentIngester, log *slog.Logger) *Server {
-	return &Server{cfg: cfg, signingKey: signingKey, stt: sttMgr, detect: detectEng, extract: extractor, search: searcher, ingest: ingester, log: log}
+func New(cfg *config.Config, signingKey string, sttMgr *stt.Manager, detectEng *detect.Engine, extractor *retrieval.Extractor, searcher *retrieval.Searcher, generator *suggest.Generator, ingester DocumentIngester, tstore *transcript.Store, summarizer *postcall.Summarizer, pcStore *postcall.Store, embedder embed.Embedder, custStore *customer.Store, chat *customer.Chat, log *slog.Logger) *Server {
+	return &Server{cfg: cfg, signingKey: signingKey, stt: sttMgr, detect: detectEng, extract: extractor, search: searcher, suggest: generator, ingest: ingester, tstore: tstore, summarizer: summarizer, pcStore: pcStore, embedder: embedder, custStore: custStore, chat: chat, log: log}
 }
 
 // Handler builds the HTTP/WS routes with telemetry and auth wired in.
@@ -54,6 +66,13 @@ func (s *Server) Handler() http.Handler {
 	// Authenticated, tenant-scoped realtime endpoint.
 	mux.Handle("GET /v1/realtime", s.authMiddleware(http.HandlerFunc(s.handleRealtime)))
 	mux.Handle("POST /v1/documents", s.authMiddleware(http.HandlerFunc(s.handleDocumentUpload)))
+
+	// Customer memory: timeline + prep chat (Stage 10.7/10.8).
+	mux.Handle("GET /v1/customers", s.authMiddleware(http.HandlerFunc(s.handleCustomerList)))
+	mux.Handle("POST /v1/customers", s.authMiddleware(http.HandlerFunc(s.handleCustomerCreate)))
+	mux.Handle("GET /v1/customers/{id}/summaries", s.authMiddleware(http.HandlerFunc(s.handleSummaryList)))
+	mux.Handle("GET /v1/summaries/{id}", s.authMiddleware(http.HandlerFunc(s.handleSummaryGet)))
+	mux.Handle("POST /v1/customers/{id}/chat", s.authMiddleware(http.HandlerFunc(s.handleChat)))
 
 	return telemetry.HTTPMiddleware(s.cfg.ServiceName)(mux)
 }

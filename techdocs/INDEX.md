@@ -68,11 +68,12 @@ Status: `planned` · `in-progress` · `done`.
 | [`query_extraction_techdoc.md`](./query_extraction_techdoc.md) — LLM ask-extraction (retrieval step 1) + `llm.Completer` provider layer | Stage 5 (early) / 6.1 | `5.3`,`18.6` | §7.3 | in-progress |
 | [`knowledge_base_techdoc.md`](./knowledge_base_techdoc.md) — upload, chunking, embeddings, pgvector store (documents-only; battlecards dropped) | Stage 4 | `4.1`,`4.5` | §7.3,§9 | in-progress |
 | [`rag_retrieval_techdoc.md`](./rag_retrieval_techdoc.md) — vector search, confidence gate, citations, suggest wiring | Stage 5 | `5.1`,`5.4`–`5.6` | §7.3 | done |
-| _suggestion_generation_techdoc.md_ | Stage 6 | `6.1`–`6.4`,`6.8`,`6.12`,`18.6`,`18.9` | §7.4 | planned |
-| _overlay_ui_techdoc.md_ | Stage 7 | `7.1`–`7.5`,`7.7`,`7.7a`,`7.9`,`20.5` | §10 | planned |
-| _consent_compliance_techdoc.md_ | Stage 8 / 22 | `14.1`–`14.7`,`14.12` | §15 | planned |
-| _sales_guidance_techdoc.md_ | Stage 9 | `8.1`–`8.6`,`6.5`,`6.7`,`3.6` | §7.4 | planned |
-| _post_call_techdoc.md_ | Stage 10 | `9.1`,`9.2`,`9.9` | §6 | planned |
+| [`suggestion_generation_techdoc.md`](./suggestion_generation_techdoc.md) — answer card: one LLM call over retrieved chunks, JSON contract, refusal, confidence gate | Stage 6 | `6.1`–`6.4`,`6.8`,`6.12`,`18.6`,`18.9` | §7.4 | done |
+| _overlay_ui_techdoc.md_ | Stage 7 | `7.1`–`7.4`,`7.7` (one-screen: control window is the overlay; Ask box → Stage 30, feedback → Stage 13, degradation + disclosure dropped/moved 2026-09-14) | §10 | planned |
+| _consent_compliance_techdoc.md_ | Stage 22 (Stage 8 skipped 2026-09-14 — met by architecture; see ROADMAP) | `14.5`–`14.7`,`14.10`,`14.13` | §15 | planned |
+| _sales_guidance_techdoc.md_ | ~~Stage 9~~ skipped 2026-09-14 (content rides the Suggest pipeline; guardrail → Stage 11, discovery/stall → Stage 15) | `6.5`,`3.6` (with `11.4`) | §7.4 | planned |
+| [`post_call_techdoc.md`](./post_call_techdoc.md) — meeting-type marker, WS-close summary/action-items/unanswered LLM call, customer + summary persistence (stored only, no UI/reply) | Stage 10 | `9.1`,`9.2`,`9.9`–`9.12` | §6 | done |
+| [`customer_memory_techdoc.md`](./customer_memory_techdoc.md) — timeline REST reads + meeting-prep chat (digest embeddings, recency + semantic retrieval + KB) | Stage 10 | `9.13`,`9.14` | §6,§9 | done |
 | _admin_playbook_techdoc.md_ | Stage 11 | `12.1`–`12.4` | §4 | planned |
 | _billing_onboarding_techdoc.md_ | Stage 12 | `16.2`,`16.3`,`16.7`,`16.9`,`17.1`,`17.2` | §4 | planned |
 | [`realtime_gateway_techdoc.md`](./realtime_gateway_techdoc.md) | Stage 0/1 | gateway, WS, session, frame parsing | §4,§5 | in-progress |

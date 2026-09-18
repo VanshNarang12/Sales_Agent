@@ -22,7 +22,7 @@ future bets.
 - [ ] **0.2** Multi-tenant data architecture — `20.8`
 - [ ] **0.3** Vector store + relational store + object store — `20.9`
 - [ ] **0.4** Real-time streaming backend (WebSocket/gRPC pipeline) — `20.1`
-- [ ] **0.5** Sign-up / auth (email + Google/Microsoft OAuth) — `16.1`
+- [ ] **0.5** Sign-up / auth (email + Google/Microsoft OAuth) — `16.1` · includes WhatsApp-OTP phone verification at sign-up (anti free-trial abuse; unique verified phone per account) — `16.13`
 - [ ] **0.6** Tenant data isolation — `15.6`
 - [ ] **0.7** Encryption in transit + at rest — `15.1`
 - [ ] **0.8** Secrets / key management & rotation — `15.9`
@@ -84,7 +84,7 @@ answer = Stage 6.)
 ## Stage 4 — Knowledge Base, minimum (the grounding source)
 *Why now: retrieval and generation need approved content to cite.*
 
-- [~] **4.1** Document upload (PDF/DOCX/PPTX/TXT/MD) — `4.1` (`POST /v1/documents` live; txt/md extraction only, pdf/docx/pptx pending — knowledge_base_techdoc.md §13)
+- [~] **4.1** Document upload (PDF/DOCX/PPTX/TXT/MD) — `4.1` (`POST /v1/documents` live; txt/md/pdf/docx extraction done, pptx pending — knowledge_base_techdoc.md §13)
 - [ ] ~~**4.2** Manual battlecard / objection-handler entry (structured) — `4.2`~~ *(dropped 2026-08-30 — documents-only KB; all answers come from uploaded files)*
 - [x] **4.3** Automatic chunking + embedding pipeline — `4.5` (recursive chunker + Groq nomic embeddings + pgvector store)
 
@@ -110,14 +110,14 @@ snippet with a citation — or honestly returns nothing. This is the anti-halluc
 ## Stage 6 — Suggestion Generation (the answer)
 *Why now: turns retrieved content into a glanceable card.*
 
-- [ ] **6.1** Pluggable LLM provider abstraction — `18.6`
-- [ ] **6.2** Short suggestion card, 1–3 bullets — `6.1`
-- [ ] **6.3** Suggested verbatim response / talk-track — `6.2`
-- [ ] **6.4** Source citation rendered on the card — `6.3`
-- [ ] **6.5** Confidence indicator on the card — `6.4`
-- [ ] **6.6** Confidence-gated display (suppress low-confidence cards) — `18.9`
-- [ ] **6.7** Hallucination guardrail: refuse / hedge when unsupported — `6.12`
-- [ ] **6.8** End-to-end 2–4 s suggestion latency — `6.8`
+- [x] **6.1** Pluggable LLM provider abstraction — `18.6` (built in Stage 5; `LLM_ANSWER_*` role added — suggestion_generation_techdoc.md)
+- [x] **6.2** Short suggestion card, 1–3 bullets — `6.1` (`internal/suggest` Generator, strict JSON contract)
+- [x] **6.3** Suggested verbatim response / talk-track — `6.2`
+- [x] **6.4** Source citation rendered on the card — `6.3` (index-mapped from retrieval, shown in the desktop dev panel; overlay is Stage 7)
+- [x] **6.5** Confidence indicator on the card — `6.4` (top retrieval score, rendered as %)
+- [x] **6.6** Confidence-gated display (suppress low-confidence cards) — `18.9` (`SUGGEST_MIN_CONFIDENCE`; gated clicks skip the LLM call)
+- [x] **6.7** Hallucination guardrail: refuse / hedge when unsupported — `6.12` (chunks-only prompt + refuse contract; uncitable = no card)
+- [~] **6.8** End-to-end 2–4 s suggestion latency — `6.8` (instrumented: `suggest_e2e_duration_ms` + timer in the client UI; p95 not yet verified on a real call)
 
 **Expectation:** a Suggest click produces a short, cited, trustworthy card in
 2–4 seconds. **This is the "magic moment."**
@@ -127,62 +127,74 @@ snippet with a citation — or honestly returns nothing. This is the anti-halluc
 ## Stage 7 — In-Call Overlay (the face)
 *Why now: the card must reach the rep without breaking the call.*
 
-- [ ] **7.1** Always-on-top floating overlay widget — `7.1`
-- [ ] **7.2** Glanceable, peripheral design — `7.2`
-- [ ] **7.3** Draggable / resizable / repositionable window — `7.3`
-- [ ] **7.4** Screen-share privacy (overlay not captured) — `7.7`
-- [ ] **7.5** Transparent disclosure that AI assistance is in use — `7.7a`
+- [x] **7.1** Always-on-top floating overlay widget — `7.1` (one-screen decision 2026-09-13: the control window IS the overlay; always-on-top at screen-saver level, visible on full-screen Spaces)
+- [x] **7.2** Glanceable, peripheral design — `7.2` (card rendered in the control panel)
+- [x] **7.3** Draggable / resizable / repositionable window — `7.3`
+- [x] **7.4** Screen-share privacy (overlay not captured) — `7.7` (`setContentProtection(true)`)
+- [ ] ~~**7.5** Transparent disclosure that AI assistance is in use — `7.7a`~~ *(dropped from Stage 7 — covered by Stage 8.1 consent/disclosure)*
 - [ ] **7.6** Keyboard shortcuts / hotkeys — `7.4`
-- [ ] **7.7** Manual "Ask" box — `7.5`
-- [ ] **7.8** In-call per-card feedback (helpful/not/wrong/too late) — `7.9`
-- [ ] **7.9** Graceful degradation if STT/LLM down — `20.5`
+- [ ] ~~**7.7** Manual "Ask" box — `7.5`~~ *(moved 2026-09-14 to Stage 30 future bets — `30.13`)*
+- [ ] ~~**7.8** In-call per-card feedback (helpful/not/wrong/too late) — `7.9`~~ *(moved 2026-09-14 to Stage 13 — folded into `13.2`)*
+- [ ] ~~**7.9** Graceful degradation if STT/LLM down — `20.5`~~ *(dropped 2026-09-14 — not needed for MVP)*
 
-**Expectation:** a rep sees private, glanceable cards over any meeting window, can
-pull answers manually, and rates each card. The full live loop now works end-to-end.
-
----
-
-## Stage 8 — Compliance Core (the gate to real calls)
-*Why now: HARD GATE — no real prospect call until this exists.*
-
-- [ ] **8.1** In-call consent / disclosure prompt — `14.1`
-- [ ] **8.2** Admin toggle to require explicit consent — `14.2`
-- [ ] **8.3** "No-recording" mode (process live, store nothing) — `14.3`
-- [ ] **8.4** Audio-off-by-default storage setting — `14.4`
-- [ ] **8.5** "No training on customer data" default — `14.12`
-
-**Expectation:** the tool can lawfully run on real, consented prospect calls. Do not
-skip or reorder this ahead of live customer use.
+**Expectation:** a rep sees private, glanceable cards floating over any meeting
+window. The full live loop now works end-to-end.
 
 ---
 
-## Stage 9 — Sales-Specific Guidance (the differentiators)
-*Why now: turns a generic copilot into a sales copilot — the killer features.*
+## Stage 8 — Compliance Core — **SKIPPED (2026-09-14: already true by architecture)**
+*Nothing to build: audio is never stored (1.6), transcripts live only in Redis with
+a sliding TTL, and Postgres holds only orgs/users/KB. Remaining items are policy or
+deferred.*
 
-- [ ] **9.1** Real-time objection-handling cards (killer #1) — `8.1`
-- [ ] **9.2** Competitor answers — pulled via Suggest from uploaded docs (killer #2) — `8.2` *(battlecard entity dropped 2026-08-30; competitor content lives in uploaded documents)*
-- [ ] **9.3** "Do-not-say" guardrail on generated cards (killer #3) — `6.5` / `8.3`
-- [ ] **9.4** Do-not-say rule match on the copilot's output (Guardrail Service) — `3.6`
-- [ ] **9.5** Product Q&A answers (cited) — `8.4`
-- [ ] **9.6** Pricing / packaging guidance — `8.5`
-- [ ] **9.7** Discovery-question prompts — `8.6`
-- [ ] **9.8** Stall-line suggestions — `6.7`
+- [x] ~~**8.1** In-call consent / disclosure prompt — `14.1`~~ *(policy, not code: rep discloses verbally / platform recording notice; build in-product prompt if customers ask)*
+- [ ] ~~**8.2** Admin toggle to require explicit consent — `14.2`~~ *(deferred to Stage 18 — no admins/teams exist yet)*
+- [x] **8.3** "No-recording" mode (process live, store nothing) — `14.3` *(already the only mode)*
+- [x] **8.4** Audio-off-by-default storage setting — `14.4` *(trivially true — no audio storage exists)*
+- [x] ~~**8.5** "No training on customer data" default — `14.12`~~ *(config/policy: set provider no-training/retention flags + one line in terms)*
 
-**Expectation:** the three headline features work: objection cards and competitor
-competitor answers pulled via the Suggest button, and the do-not-say guardrail vetting every
-generated card — all cited.
+**Expectation:** met by architecture. Revisit consent tooling (in-product prompt,
+admin toggle) when real customer pilots or Stage 18 teams demand it.
 
 ---
 
-## Stage 10 — Post-Call Output (value after the call)
-*Why now: immediate value even when live cards miss; feeds CRM later.*
+## Stage 9 — Sales-Specific Guidance — **SKIPPED (2026-09-14: no new build needed)**
+*Objections, competitor answers, product Q&A and pricing already ride the Suggest
+pipeline (Stages 3–6) — they're content + prompt-tuning, not features. The
+do-not-say guardrail is deferred until real customers need it.*
 
-- [ ] **10.1** Post-call summary — `9.1`
-- [ ] **10.2** Action items / next-steps extraction — `9.2`
-- [ ] **10.3** "Unanswered question" capture (content-gap signal) — `9.9`
+- [x] **9.1** Real-time objection-handling cards (killer #1) — `8.1` *(works via Suggest; quality tuning happens in Stage 13 evals)*
+- [x] **9.2** Competitor answers — pulled via Suggest from uploaded docs (killer #2) — `8.2`
+- [ ] ~~**9.3** "Do-not-say" guardrail on generated cards (killer #3) — `6.5` / `8.3`~~ *(deferred to Stage 11, next to the rules editor `11.4`)*
+- [ ] ~~**9.4** Do-not-say rule match on the copilot's output (Guardrail Service) — `3.6`~~ *(deferred to Stage 11)*
+- [x] **9.5** Product Q&A answers (cited) — `8.4`
+- [x] **9.6** Pricing / packaging guidance — `8.5`
+- [ ] ~~**9.7** Discovery-question prompts — `8.6`~~ *(deferred to Stage 15 — merged with `15.7`)*
+- [ ] ~~**9.8** Stall-line suggestions — `6.7`~~ *(deferred to Stage 15)*
 
-**Expectation:** every call ends with a usable summary, next steps, and a list of
-what the KB couldn't answer.
+**Expectation:** met by the existing Suggest pipeline — any content type in the
+uploaded docs (objections, competitors, pricing, Q&A) comes back as a cited card.
+Card-quality tuning lands in Stage 13; the guardrail lands with Stage 11.
+
+---
+
+## Stage 10 — Post-Call Output & Customer Memory (value after the call)
+*Why now: immediate value even when live cards miss; feeds CRM later. Extended
+2026-09-14 with customer memory: transcripts stay ephemeral, but summaries persist
+per customer so the whole team keeps context across meetings.*
+
+- [x] **10.1** Meeting-type marker at call start: internal vs. customer — `9.10` (2026-09-14: `meetingType` on hello, default internal = nothing stored)
+- [x] **10.2** Optional customer tagging on customer calls (name → per-tenant customer record) — `9.11` (case-insensitive find-or-create; migration 0003)
+- [x] **10.3** Post-call summary — `9.1` (`internal/postcall` Summarizer; runs on WS close — no in-call message, no UI display; post_call_techdoc.md)
+- [x] **10.4** Action items / next-steps extraction — `9.2` (same LLM call as 10.3)
+- [x] **10.5** "Unanswered question" capture (content-gap signal) — `9.9` (same LLM call; Suggest-outcome signal deferred to Stage 13)
+- [~] **10.6** Persist the summary (+ action items + unanswered) against the tagged customer — `9.12` (code + tests done; live smoke test on a real call pending)
+- [~] **10.7** Customer context timeline: past summaries for a customer, team-visible — `9.13` (2026-09-17: 4 REST endpoints live; UI comes with the web app; live smoke test pending)
+- [~] **10.8** Meeting-prep chat: chat grounded in the customer's past summaries + the KB — `9.14` (2026-09-17: `POST /v1/customers/{id}/chat` — digests embedded per 0004, recency + semantic retrieval + KB chunks, all env-tunable; UI comes with the web app; live smoke test pending; delivers part of `25.2` early)
+
+**Expectation:** every customer call ends with a summary, next steps, and content
+gaps — saved to that customer. Before the next meeting, any rep can open the prep
+chat and plan the pitch with full history + company docs as context.
 
 ---
 
@@ -193,6 +205,7 @@ what the KB couldn't answer.
 - [ ] ~~**11.2** Objection → response mapping editor — `12.2`~~ *(dropped 2026-08-30 — no structured entries; objection answers live in uploaded docs)*
 - [ ] ~~**11.3** Battlecard editor (per competitor) — `12.3`~~ *(dropped 2026-08-30 — no battlecard entity)*
 - [ ] **11.4** "Do-not-say" rules editor — `12.4`
+- [ ] **11.5** "Do-not-say" guardrail on generated cards (rule match before the WS send) — `6.5` / `8.3` / `3.6` *(moved here from Stage 9 on 2026-09-14 — build together with 11.4)*
 
 **Expectation:** a sales leader can author and control exactly what reps see live.
 
@@ -216,7 +229,7 @@ what the KB couldn't answer.
 *Why now: lock the metrics before adding breadth.*
 
 - [ ] **13.1** Hallucination / groundedness evaluation harness — `18.3`
-- [ ] **13.2** Suggestion feedback capture pipeline — `18.2`
+- [ ] **13.2** Suggestion feedback capture pipeline, incl. in-call per-card feedback (helpful/not/wrong/too late) — `18.2` / `7.9` *(moved here from Stage 7 on 2026-09-14)*
 - [ ] **13.3** Cost-per-call monitoring & guardrails — `18.8`
 
 > **✅ MVP COMPLETE.** Bar to clear: useful-suggestion ≥50%, wrong-answer <5%, latency
@@ -250,7 +263,8 @@ what the KB couldn't answer.
 - [ ] **15.4** Caching of common Q&A / objections — `5.9`
 - [ ] **15.5** Streaming card rendering — `6.9`
 - [ ] **15.6** Multi-suggestion ranking (best first, alternatives on demand) — `6.11`
-- [ ] **15.7** Clarifying / discovery-question suggestions — `6.6`
+- [ ] **15.7** Clarifying / discovery-question suggestions — `6.6` / `8.6` *(absorbed Stage 9's `9.7` on 2026-09-14)*
+- [ ] **15.8** Stall-line suggestions — `6.7` *(moved here from Stage 9 on 2026-09-14)*
 
 ---
 
@@ -294,6 +308,7 @@ what the KB couldn't answer.
 - [ ] **18.9** Shared vs. private playbooks — `12.9`
 - [ ] ~~**18.10** Trigger/tracker configuration (admin) — `12.5`~~ *(dropped — no auto-fire; the rep triggers via Suggest)*
 - [ ] **18.11** Methodology configuration — `12.10`
+- [ ] **18.12** Admin toggle to require explicit consent — `14.2` *(moved here from Stage 8 on 2026-09-14)*
 
 ---
 
@@ -450,6 +465,7 @@ review after every call, plus an improvement plan and strengths — tracked over
 - [ ] **30.10** Leaderboards / benchmarking — `13.8`
 - [ ] **30.11** Private / VPC / self-hosted deployment — `15.8`
 - [ ] **30.12** Linux desktop client — `20.12`
+- [ ] **30.13** Manual "Ask" box (type a question mid-call) — `7.5` *(moved here from Stage 7 on 2026-09-14)*
 
 ---
 

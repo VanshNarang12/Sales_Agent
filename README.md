@@ -56,6 +56,8 @@ team (transparent and consent-based, not covert monitoring). See §13A in
 
 ## Documents
 
+- [`COMPANY.md`](./COMPANY.md) — **the company overview**: mission, market,
+  business model, unit economics, current status, and plans.
 - [`FEATURES.md`](./FEATURES.md) — **the complete, prioritized feature analysis**
   (the main artifact: every feature required to build this product, grouped by
   capability area and release tier).

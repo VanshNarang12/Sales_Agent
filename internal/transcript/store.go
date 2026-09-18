@@ -66,6 +66,23 @@ func (s *Store) Window(ctx context.Context, tenantID, sessionID string, lookback
 	if err != nil {
 		return nil, fmt.Errorf("transcript window: %w", err)
 	}
+	return parseEntries(vals), nil
+}
+
+// Full returns the whole call, oldest first — the post-call summarizer's read
+// (Stage 10). An absent or empty session yields (nil, nil).
+func (s *Store) Full(ctx context.Context, tenantID, sessionID string) ([]Entry, error) {
+	vals, err := s.rdb.ZRangeWithScores(ctx, key(tenantID, sessionID), 0, -1).Result()
+	if err != nil {
+		return nil, fmt.Errorf("transcript full: %w", err)
+	}
+	if len(vals) == 0 {
+		return nil, nil
+	}
+	return parseEntries(vals), nil
+}
+
+func parseEntries(vals []redis.Z) []Entry {
 	out := make([]Entry, 0, len(vals))
 	for _, z := range vals {
 		m, ok := z.Member.(string)
@@ -77,7 +94,7 @@ func (s *Store) Window(ctx context.Context, tenantID, sessionID string, lookback
 			out = append(out, e)
 		}
 	}
-	return out, nil
+	return out
 }
 
 // parseMember decodes "{startMs}|{speaker}: {text}".

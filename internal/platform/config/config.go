@@ -72,6 +72,31 @@ type Config struct {
 	// Retrieval search (Stage 5) — rag_retrieval_techdoc.md §9.
 	RetrievalTopK     int
 	RetrievalMinScore float64 // cosine-similarity gate; below it a hit is dropped (5.5)
+
+	// LLM answer role (Stage 6 card generation) — suggestion_generation_techdoc.md §9.
+	LLMAnswerProvider  string
+	LLMAnswerModel     string
+	LLMAnswerBaseURL   string
+	LLMAnswerMaxTokens int
+	// SuggestMinConfidence gates cards: below it the card is dropped, hits still sent (18.9).
+	SuggestMinConfidence float64
+
+	// LLM summary role (Stage 10 post-call digest) — post_call_techdoc.md §9.
+	LLMSummaryProvider  string
+	LLMSummaryModel     string
+	LLMSummaryBaseURL   string
+	LLMSummaryMaxTokens int
+
+	// Prep chat (Stage 10.8) — customer_memory_techdoc.md §9. Every context knob
+	// is configurable by design (user decision 2026-09-17).
+	LLMChatProvider     string
+	LLMChatModel        string
+	LLMChatBaseURL      string
+	LLMChatMaxTokens    int
+	ChatRecentSummaries int // newest digests always included
+	ChatTopKSummaries   int // semantically retrieved digests
+	ChatTopKChunks      int // retrieved KB chunks
+	ChatMaxTurns        int // chat-history cap per turn
 }
 
 // Load reads configuration from the environment and validates it.
@@ -96,7 +121,7 @@ func Load(serviceName string) (*Config, error) {
 		TranscriptTTLSeconds: getenvInt("TRANSCRIPT_TTL_SECONDS", 1800),
 
 		LLMExtractProvider:  getenv("LLM_EXTRACT_PROVIDER", "openai_compatible"),
-		LLMExtractModel:     getenv("LLM_EXTRACT_MODEL", "llama-3.3-70b-versatile"),
+		LLMExtractModel:     getenv("LLM_EXTRACT_MODEL", "openai/gpt-oss-20b"),
 		LLMExtractBaseURL:   getenv("LLM_EXTRACT_BASE_URL", "https://api.groq.com/openai/v1"),
 		LLMExtractMaxTokens: getenvInt("LLM_EXTRACT_MAX_TOKENS", 300),
 
@@ -111,6 +136,26 @@ func Load(serviceName string) (*Config, error) {
 
 		RetrievalTopK:     getenvInt("RETRIEVAL_TOP_K", 5),
 		RetrievalMinScore: getenvFloat("RETRIEVAL_MIN_SCORE", 0.5),
+
+		LLMAnswerProvider:    getenv("LLM_ANSWER_PROVIDER", "openai_compatible"),
+		LLMAnswerModel:       getenv("LLM_ANSWER_MODEL", "openai/gpt-oss-120b"),
+		LLMAnswerBaseURL:     getenv("LLM_ANSWER_BASE_URL", "https://api.groq.com/openai/v1"),
+		LLMAnswerMaxTokens:   getenvInt("LLM_ANSWER_MAX_TOKENS", 2000),
+		SuggestMinConfidence: getenvFloat("SUGGEST_MIN_CONFIDENCE", 0.5),
+
+		LLMSummaryProvider:  getenv("LLM_SUMMARY_PROVIDER", "openai_compatible"),
+		LLMSummaryModel:     getenv("LLM_SUMMARY_MODEL", "openai/gpt-oss-120b"),
+		LLMSummaryBaseURL:   getenv("LLM_SUMMARY_BASE_URL", "https://api.groq.com/openai/v1"),
+		LLMSummaryMaxTokens: getenvInt("LLM_SUMMARY_MAX_TOKENS", 1500),
+
+		LLMChatProvider:     getenv("LLM_CHAT_PROVIDER", "openai_compatible"),
+		LLMChatModel:        getenv("LLM_CHAT_MODEL", "openai/gpt-oss-120b"),
+		LLMChatBaseURL:      getenv("LLM_CHAT_BASE_URL", "https://api.groq.com/openai/v1"),
+		LLMChatMaxTokens:    getenvInt("LLM_CHAT_MAX_TOKENS", 2500),
+		ChatRecentSummaries: getenvInt("CHAT_RECENT_SUMMARIES", 2),
+		ChatTopKSummaries:   getenvInt("CHAT_TOPK_SUMMARIES", 5),
+		ChatTopKChunks:      getenvInt("CHAT_TOPK_CHUNKS", 5),
+		ChatMaxTurns:        getenvInt("CHAT_MAX_TURNS", 12),
 	}
 	// AUTH_DISABLED is honored only in dev — never bypass auth in staging/prod.
 	if c.Env != "dev" {

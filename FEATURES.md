@@ -222,6 +222,11 @@ What makes this a *sales* copilot, not a generic LLM overlay (a core moat per th
 | 9.7 | **Rep self-scorecard / call review** | V2 | 🟢 | Self-coaching; methodology adherence. |
 | 9.8 | **Highlight reel / key-moment clips** | Future | 🟢 | Gong-style snippets for coaching/sharing. |
 | 9.9 | **"Unanswered question" capture** (what the KB couldn't answer) | V1 | 🔴 | Direct content-gap signal — tells admins what to add. |
+| 9.10 | **Meeting-type marker** (internal vs. customer, set at call start) | MVP | 🔴 | Added 2026-09-14. Internal meetings skip customer tagging and summary persistence. |
+| 9.11 | **Customer tagging on a call** (optional customer name → per-tenant customer record) | MVP | 🔴 | Added 2026-09-14. Links calls to a customer so context accumulates across reps. |
+| 9.12 | **Persisted per-customer meeting summaries** (summaries only — transcripts stay ephemeral) | MVP | 🔴 | Added 2026-09-14. The team's memory of every past discussion with that customer. |
+| 9.13 | **Customer context timeline** (all past summaries for a customer, team-visible) | V1 | 🟠 | Added 2026-09-14. Any teammate walking into a meeting sees the history. |
+| 9.14 | **Meeting-prep chat** (chat grounded in that customer's past summaries + the KB) | V1 | 🔴 | Added 2026-09-14. Rep prepares the pitch/plan for the next meeting with full context. |
 
 ---
 
@@ -393,6 +398,7 @@ Mirrors the pricing model from `Verdict.md` (Free → Solo → Pro → Team → 
 | 16.10 | **Hybrid base + usage pricing option** | V1 | 🟠 | Research: hybrid is the pragmatic PAYG answer. |
 | 16.11 | **Seat management / team invites** | V1 | 🔴 | Team expansion motion ("invite your team"). |
 | 16.12 | **Plan upgrade/downgrade & self-serve checkout** | V1 | 🟠 | Product-led growth. |
+| 16.13 | **Phone verification at sign-up — OTP over WhatsApp** | MVP | 🔴 | Added 2026-09-16. Anti-abuse: email-only login lets one person mint unlimited free-trial accounts; a verified, unique phone number per account makes that expensive. WhatsApp OTP (Meta Cloud API or a provider like Twilio/MSG91/Gupshup) over SMS for cost + India-market fit. |
 
 ---
 
