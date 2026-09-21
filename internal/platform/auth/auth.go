@@ -5,6 +5,7 @@
 package auth
 
 import (
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/base64"
@@ -18,11 +19,38 @@ import (
 // ErrInvalidToken is returned when a token fails verification.
 var ErrInvalidToken = errors.New("auth: invalid token")
 
+// Token scopes. A "pre" token is issued after signup/login but before the one-time
+// phone verification (16.13); it may only call the OTP endpoints and /v1/me. A
+// legacy empty scope is treated as full (pre-0005 tokens are dev-only).
+const (
+	ScopePre     = "pre"
+	ScopeFull    = "full"
+	ScopeRefresh = "refresh"
+)
+
 // Claims is the authenticated session identity. OrgID is the tenant id.
 type Claims struct {
 	UserID    string `json:"uid"`
 	OrgID     string `json:"org"`
 	ExpiresAt int64  `json:"exp"`
+	Scope     string `json:"scp,omitempty"`
+	TokenID   string `json:"jti,omitempty"` // set on refresh tokens (DB lifecycle row)
+}
+
+// Full reports whether the claims grant full product access.
+func (c Claims) Full() bool { return c.Scope == ScopeFull || c.Scope == "" }
+
+type claimsCtxKey struct{}
+
+// WithClaims returns a copy of ctx carrying the verified claims.
+func WithClaims(ctx context.Context, c Claims) context.Context {
+	return context.WithValue(ctx, claimsCtxKey{}, c)
+}
+
+// ClaimsFrom extracts the verified claims set by the auth middleware.
+func ClaimsFrom(ctx context.Context) (Claims, bool) {
+	c, ok := ctx.Value(claimsCtxKey{}).(Claims)
+	return c, ok
 }
 
 // Issue creates a signed token for the claims, valid for ttl.

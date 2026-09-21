@@ -33,6 +33,24 @@ type Config struct {
 	// AuthSigningKey is the HMAC key used to sign session tokens (from secrets mgr).
 	AuthSigningKey string
 
+	// Auth token lifetimes (Stage 0.5) — auth_techdoc.md §9.
+	AccessTokenTTLMin  int // full-scope access token
+	PreAuthTokenTTLMin int // pre-scope token (before phone verification)
+	RefreshTokenTTLDay int // refresh token lifetime
+
+	// One-time WhatsApp OTP phone verification (16.13) — auth_techdoc.md §9.
+	OTPTTLSeconds      int
+	OTPMaxAttempts     int
+	OTPResendCooldownS int
+	OTPDailyCap        int
+	WhatsAppAPIBase    string // Meta Graph API base
+	WhatsAppPhoneID    string // sender phone-number id (empty in dev ⇒ log-only sender)
+	WhatsAppTemplate   string // approved authentication template name
+	WhatsAppLang       string // template language code
+
+	// GoogleClientIDs are the accepted OAuth client ids (web + desktop), comma-separated.
+	GoogleClientIDs []string
+
 	// AuthDisabled bypasses login on the realtime endpoint and injects DevTenantID.
 	// DEV ONLY — ignored unless Env == "dev". Lets us build/test the core pipeline
 	// before the OAuth/login flow is built (deferred to Stage 0.5).
@@ -110,6 +128,21 @@ func Load(serviceName string) (*Config, error) {
 		NATSURL:        getenv("NATS_URL", "nats://localhost:4222"),
 		OTelEndpoint:   getenv("OTEL_EXPORTER_OTLP_ENDPOINT", "localhost:4318"),
 		AuthSigningKey: os.Getenv("AUTH_SIGNING_KEY"),
+
+		AccessTokenTTLMin:  getenvInt("ACCESS_TOKEN_TTL_MIN", 15),
+		PreAuthTokenTTLMin: getenvInt("PREAUTH_TOKEN_TTL_MIN", 10),
+		RefreshTokenTTLDay: getenvInt("REFRESH_TOKEN_TTL_DAYS", 30),
+
+		OTPTTLSeconds:      getenvInt("OTP_TTL_SECONDS", 300),
+		OTPMaxAttempts:     getenvInt("OTP_MAX_ATTEMPTS", 5),
+		OTPResendCooldownS: getenvInt("OTP_RESEND_COOLDOWN_SECONDS", 60),
+		OTPDailyCap:        getenvInt("OTP_DAILY_CAP", 10),
+		WhatsAppAPIBase:    getenv("WHATSAPP_API_BASE", "https://graph.facebook.com/v20.0"),
+		WhatsAppPhoneID:    os.Getenv("WHATSAPP_PHONE_NUMBER_ID"),
+		WhatsAppTemplate:   getenv("WHATSAPP_TEMPLATE", "otp_login"),
+		WhatsAppLang:       getenv("WHATSAPP_LANG", "en"),
+
+		GoogleClientIDs: splitCSV(os.Getenv("GOOGLE_CLIENT_IDS")),
 		AuthDisabled:   os.Getenv("AUTH_DISABLED") == "true",
 		DevTenantID:    getenv("DEV_TENANT_ID", "00000000-0000-0000-0000-000000000001"),
 
@@ -184,6 +217,17 @@ func (c *Config) validate() error {
 		return fmt.Errorf("invalid ENV %q (want dev|staging|prod)", c.Env)
 	}
 	return nil
+}
+
+// splitCSV parses a comma-separated env value, trimming blanks.
+func splitCSV(v string) []string {
+	var out []string
+	for _, p := range strings.Split(v, ",") {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 func getenv(key, fallback string) string {

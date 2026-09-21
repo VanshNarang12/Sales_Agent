@@ -22,7 +22,7 @@ future bets.
 - [ ] **0.2** Multi-tenant data architecture — `20.8`
 - [ ] **0.3** Vector store + relational store + object store — `20.9`
 - [ ] **0.4** Real-time streaming backend (WebSocket/gRPC pipeline) — `20.1`
-- [ ] **0.5** Sign-up / auth (email + Google/Microsoft OAuth) — `16.1` · includes WhatsApp-OTP phone verification at sign-up (anti free-trial abuse; unique verified phone per account) — `16.13`
+- [~] **0.5** Sign-up / auth (email + Google/Microsoft OAuth) — `16.1` · includes WhatsApp-OTP phone verification at sign-up (anti free-trial abuse; unique verified phone per account) — `16.13` (2026-09-21: backend DONE — signup/login/Google/OTP/refresh + migration 0005 applied + live smoke test passed, auth_techdoc.md; pending: WABA template + `GOOGLE_CLIENT_IDS` (ops), client login UIs; Microsoft OAuth deferred)
 - [ ] **0.6** Tenant data isolation — `15.6`
 - [ ] **0.7** Encryption in transit + at rest — `15.1`
 - [ ] **0.8** Secrets / key management & rotation — `15.9`

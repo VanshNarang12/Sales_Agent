@@ -17,6 +17,7 @@ import (
 	"github.com/VanshNarang12/sales-agent/internal/detect"
 	"github.com/VanshNarang12/sales-agent/internal/embed"
 	"github.com/VanshNarang12/sales-agent/internal/gateway"
+	"github.com/VanshNarang12/sales-agent/internal/identity"
 	"github.com/VanshNarang12/sales-agent/internal/kb"
 	"github.com/VanshNarang12/sales-agent/internal/llm"
 	"github.com/VanshNarang12/sales-agent/internal/platform/config"
@@ -50,13 +51,15 @@ func run(log *slog.Logger) error {
 	if err != nil {
 		return err
 	}
-	var signingKey string
-	if !cfg.AuthDisabled {
-		signingKey, err = secrets.EnvStore{}.Get(ctx, "AUTH_SIGNING_KEY")
-		if err != nil {
+	signingKey, err := secrets.EnvStore{}.Get(ctx, secrets.KeyAuthSigning)
+	if err != nil {
+		if !cfg.AuthDisabled {
 			return err
 		}
-	} else {
+		signingKey = ""
+		log.Warn("AUTH_DISABLED and no signing key: auth endpoints disabled (dev only)")
+	}
+	if cfg.AuthDisabled {
 		log.Warn("AUTH_DISABLED: realtime endpoint is unauthenticated (dev only)")
 	}
 
@@ -88,10 +91,11 @@ func run(log *slog.Logger) error {
 		log.Warn("summary persistence disabled: no database")
 	}
 	chat := buildChat(ctx, cfg, custStore, searcher, embedder, log)
+	idsvc := buildIdentity(ctx, cfg, pool, signingKey, log)
 
 	srv := &http.Server{
 		Addr:              cfg.HTTPAddr,
-		Handler:           gateway.New(cfg, signingKey, sttMgr, detectEng, extractor, searcher, generator, ingester, tstore, summarizer, pcStore, embedder, custStore, chat, log).Handler(),
+		Handler:           gateway.New(cfg, signingKey, sttMgr, detectEng, extractor, searcher, generator, ingester, tstore, summarizer, pcStore, embedder, custStore, chat, idsvc, log).Handler(),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
@@ -108,6 +112,67 @@ func run(log *slog.Logger) error {
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	return srv.Shutdown(shutdownCtx)
+}
+
+// buildIdentity wires Stage-0.5 auth. Missing DB or signing key ⇒ nil ⇒ all
+// /v1/auth endpoints answer 503; everything else runs. OTP and Google sign-in
+// degrade independently inside the service.
+func buildIdentity(ctx context.Context, cfg *config.Config, pool *pgxpool.Pool, signingKey string, log *slog.Logger) *identity.Service {
+	if pool == nil || signingKey == "" {
+		log.Warn("auth disabled: missing database or signing key")
+		return nil
+	}
+
+	var otpMgr *identity.OTPManager
+	if opts, err := redis.ParseURL(cfg.RedisURL); err == nil {
+		rdb := redis.NewClient(opts)
+		pingCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+		defer cancel()
+		if err := rdb.Ping(pingCtx).Err(); err == nil {
+			otpMgr = identity.NewOTPManager(rdb, identity.OTPConfig{
+				TTL:            time.Duration(cfg.OTPTTLSeconds) * time.Second,
+				MaxAttempts:    cfg.OTPMaxAttempts,
+				ResendCooldown: time.Duration(cfg.OTPResendCooldownS) * time.Second,
+				DailyCap:       cfg.OTPDailyCap,
+			})
+		} else {
+			log.Warn("OTP disabled: redis unreachable", "err", err)
+		}
+	} else {
+		log.Warn("OTP disabled: bad REDIS_URL", "err", err)
+	}
+
+	var sender identity.OTPSender
+	waToken, waErr := secrets.EnvStore{}.Get(ctx, secrets.KeyWhatsAppToken)
+	switch {
+	case cfg.WhatsAppPhoneID != "" && waErr == nil:
+		sender = identity.NewMetaSender(cfg.WhatsAppAPIBase, cfg.WhatsAppPhoneID, waToken, cfg.WhatsAppTemplate, cfg.WhatsAppLang)
+		log.Info("whatsapp OTP enabled", "template", cfg.WhatsAppTemplate)
+	case cfg.Env == "dev":
+		sender = identity.LogSender{Log: log}
+		log.Warn("whatsapp OTP: dev log-only sender (no WABA configured)")
+	default:
+		log.Warn("OTP delivery disabled: WhatsApp not configured")
+	}
+
+	var google identity.GoogleTokenVerifier
+	if len(cfg.GoogleClientIDs) > 0 {
+		gv, err := identity.NewGoogleVerifier(ctx, cfg.GoogleClientIDs)
+		if err != nil {
+			log.Warn("google sign-in disabled", "err", err)
+		} else {
+			google = gv
+			log.Info("google sign-in enabled", "client_ids", len(cfg.GoogleClientIDs))
+		}
+	}
+
+	log.Info("auth enabled",
+		"access_ttl_min", cfg.AccessTokenTTLMin, "refresh_ttl_days", cfg.RefreshTokenTTLDay)
+	return identity.NewService(identity.NewStore(pool), otpMgr, sender, google, signingKey, identity.Config{
+		AccessTTL:  time.Duration(cfg.AccessTokenTTLMin) * time.Minute,
+		PreAuthTTL: time.Duration(cfg.PreAuthTokenTTLMin) * time.Minute,
+		RefreshTTL: time.Duration(cfg.RefreshTokenTTLDay) * 24 * time.Hour,
+	}, log)
 }
 
 // buildTranscriptStore connects the Redis live-transcript store, shared by the

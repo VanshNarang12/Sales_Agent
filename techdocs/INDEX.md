@@ -61,6 +61,7 @@ Status: `planned` · `in-progress` · `done`.
 | --- | --- | --- | --- | --- |
 | [`coding_standards_techdoc.md`](./coding_standards_techdoc.md) | all | — | §19, ADR-002 | done |
 | [`project_foundations_techdoc.md`](./project_foundations_techdoc.md) | Stage 0 | 0.1–0.9, `20.8`,`20.9`,`20.1`,`16.1`,`15.6`,`15.1`,`15.9`,`18.1` | §9,§13,§17 | in-progress |
+| [`auth_techdoc.md`](./auth_techdoc.md) — signup/login (argon2id + Google ID token), one-time WhatsApp OTP phone verification (Meta Cloud API), pre/full scopes, rotating refresh tokens | Stage 0 (0.5) | `16.1`,`16.13` | §4,§13 | in-progress |
 | [`audio_capture_techdoc.md`](./audio_capture_techdoc.md) | Stage 1 | `1.1`–`1.6`,`1.8`,`1.12` | §10 | in-progress |
 | [`transcription_techdoc.md`](./transcription_techdoc.md) | Stage 2 | `2.1`–`2.6`,`2.10` | §7.1 | done |
 | [`detection_techdoc.md`](./detection_techdoc.md) — *Suggestion Trigger* (manual "Suggest" button; auto-detection removed) | Stage 3 | `3.1`–`3.4`,`3.11` | §7.2 | in-progress |
