@@ -185,6 +185,19 @@ Auth endpoints ride the existing `telemetry.HTTPMiddleware`. Structured logs:
 signup/login/otp events tenant-tagged, **never** the password, code, or full phone
 (last 4 digits only). Not on the hot path — no stage-latency budget line.
 
+## 12b. Desktop client login (plan 2026-09-28, Sales_Agent_Frontend)
+- Main process owns tokens: `src/auth.ts` — refresh token persisted via Electron
+  `safeStorage` (OS keychain) in userData; access token memory-only; renderer
+  never sees tokens, only `{email, scope, phone_verified}` over IPC.
+- Auth rides `webRequest.onBeforeSendHeaders`: main injects
+  `Authorization: Bearer <access>` on every request to the gateway origin —
+  including the WS upgrade the browser `WebSocket` cannot header itself. Zero
+  backend changes.
+- Login-only on desktop (email+password + workspace picker). Signup/OTP stay on
+  the website; a pre-scope login shows "finish verification on the website".
+- Refresh: on boot from the stored refresh token, then every 10 min (access TTL
+  15 min) so the WS upgrade always carries a live token; logout revokes.
+
 ## 13. Open questions / TODO
 - Password reset (needs email provider — pick with Stage 12 onboarding).
 - Per-IP rate limiting on auth endpoints (edge/middleware) before public exposure.
@@ -193,6 +206,11 @@ signup/login/otp events tenant-tagged, **never** the password, code, or full pho
 - Turn `AUTH_DISABLED` off as the dev default once clients have login UIs.
 
 ## 14. Changelog
+- `2026-09-28` — Desktop client login built per §12b (Sales_Agent_Frontend):
+  `src/auth.ts` main-process token owner (safeStorage persistence, 10-min refresh
+  loop, header injection incl. WS upgrade), IPC bridge, login view with workspace
+  picker + verify-on-website notice, signed-in row + logout. Web app gained
+  /customers timeline + prep chat pages the same day (web_app_techdoc.md). — Claude
 - `2026-09-19` — Techdoc created; design agreed (manual+Google, one-time WhatsApp
   OTP via Meta Cloud API, pre/full scopes, rotating refresh tokens). — Claude
 - `2026-09-20` — Implemented end to end: migration 0005 (not yet applied to the

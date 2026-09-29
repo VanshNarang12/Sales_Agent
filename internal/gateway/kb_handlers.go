@@ -8,12 +8,37 @@ import (
 	"net/http"
 
 	"github.com/VanshNarang12/sales-agent/internal/kb"
+	"github.com/VanshNarang12/sales-agent/internal/platform/auth"
 )
 
 // DocumentIngester is what the gateway needs from Stage-4 ingest (kb.Ingester
 // satisfies it; tests use a fake). nil ⇒ upload endpoint answers 503.
 type DocumentIngester interface {
-	IngestDocument(ctx context.Context, title, text string) (documentID string, chunkCount int, err error)
+	IngestDocument(ctx context.Context, title, text, uploadedBy string) (documentID string, chunkCount int, err error)
+}
+
+// DocumentLister serves the Documents page list (kb.Store satisfies it).
+type DocumentLister interface {
+	ListDocuments(ctx context.Context) ([]kb.DocumentInfo, error)
+}
+
+// handleDocumentList: GET /v1/documents — the org's documents, newest first, with
+// uploader email + chunk count (knowledge_base_techdoc.md §7).
+func (s *Server) handleDocumentList(w http.ResponseWriter, r *http.Request) {
+	if s.docList == nil {
+		http.Error(w, "documents unavailable (DB not configured)", http.StatusServiceUnavailable)
+		return
+	}
+	docs, err := s.docList.ListDocuments(r.Context())
+	if err != nil {
+		s.log.Warn("document list failed", "err", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	if docs == nil {
+		docs = []kb.DocumentInfo{}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"documents": docs})
 }
 
 // handleDocumentUpload: POST /v1/documents — multipart `file` (+ optional `title`).
@@ -57,7 +82,8 @@ func (s *Server) handleDocumentUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	docID, chunks, err := s.ingest.IngestDocument(r.Context(), title, text)
+	claims, _ := auth.ClaimsFrom(r.Context()) // absent under the dev bypass → "" → NULL
+	docID, chunks, err := s.ingest.IngestDocument(r.Context(), title, text, claims.UserID)
 	if err != nil {
 		s.log.Warn("ingest failed", "title", title, "err", err)
 		http.Error(w, "ingestion failed", http.StatusBadGateway)

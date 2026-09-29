@@ -51,6 +51,8 @@ type Config struct {
 	// GoogleClientIDs are the accepted OAuth client ids (web + desktop), comma-separated.
 	GoogleClientIDs []string
 
+	CORSAllowedOrigins []string
+
 	// AuthDisabled bypasses login on the realtime endpoint and injects DevTenantID.
 	// DEV ONLY — ignored unless Env == "dev". Lets us build/test the core pipeline
 	// before the OAuth/login flow is built (deferred to Stage 0.5).
@@ -143,6 +145,8 @@ func Load(serviceName string) (*Config, error) {
 		WhatsAppLang:       getenv("WHATSAPP_LANG", "en"),
 
 		GoogleClientIDs: splitCSV(os.Getenv("GOOGLE_CLIENT_IDS")),
+
+		CORSAllowedOrigins: splitCSV(getenv("CORS_ALLOWED_ORIGINS", "http://localhost:5173")),
 		AuthDisabled:   os.Getenv("AUTH_DISABLED") == "true",
 		DevTenantID:    getenv("DEV_TENANT_ID", "00000000-0000-0000-0000-000000000001"),
 

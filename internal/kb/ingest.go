@@ -9,7 +9,7 @@ import (
 
 // documentStore is what the Ingester needs from storage (*Store satisfies it; tests use a fake).
 type documentStore interface {
-	CreateDocument(ctx context.Context, title string) (string, error)
+	CreateDocument(ctx context.Context, title, uploadedBy string) (string, error)
 	InsertChunks(ctx context.Context, documentID string, pieces []Piece, vectors [][]float32) error
 	MarkFailed(ctx context.Context, documentID string) error
 }
@@ -35,13 +35,13 @@ func NewIngester(embedder embed.Embedder, store documentStore, targetTokens, ove
 // IngestDocument takes plain text (extraction from PDF/DOCX happens in the handler,
 // before this) and makes it searchable. On embed/store failure the document is
 // marked 'failed' and zero chunks exist — never half-indexed.
-func (in *Ingester) IngestDocument(ctx context.Context, title, text string) (documentID string, chunkCount int, err error) {
+func (in *Ingester) IngestDocument(ctx context.Context, title, text, uploadedBy string) (documentID string, chunkCount int, err error) {
 	pieces := Chunk(title, text, in.targetTokens, in.overlapTokens)
 	if len(pieces) == 0 {
 		return "", 0, fmt.Errorf("ingest %q: document has no extractable text", title)
 	}
 
-	documentID, err = in.store.CreateDocument(ctx, title)
+	documentID, err = in.store.CreateDocument(ctx, title, uploadedBy)
 	if err != nil {
 		return "", 0, fmt.Errorf("ingest %q: %w", title, err)
 	}

@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -19,6 +20,7 @@ import (
 	"github.com/VanshNarang12/sales-agent/internal/detect"
 	"github.com/VanshNarang12/sales-agent/internal/embed"
 	"github.com/VanshNarang12/sales-agent/internal/platform/tenancy"
+	"github.com/VanshNarang12/sales-agent/internal/postcall"
 	"github.com/VanshNarang12/sales-agent/internal/retrieval"
 	"github.com/VanshNarang12/sales-agent/internal/stt"
 	"github.com/VanshNarang12/sales-agent/internal/suggest"
@@ -119,6 +121,48 @@ type session struct {
 	meetingType     string
 	customerName    string
 	postcallStarted bool
+
+	// Per-call stats for the meetings APIs (migration 0007). statsMu guards them:
+	// they're written on the Suggest goroutine and read on the session-end defer.
+	statsMu     sync.Mutex
+	startedAt   time.Time
+	cardsServed int
+	citedDocs   map[string]struct{}
+}
+
+// recordCard counts a served answer card and the documents it cited.
+func (sess *session) recordCard(card *suggest.Card) {
+	if card == nil {
+		return
+	}
+	sess.statsMu.Lock()
+	defer sess.statsMu.Unlock()
+	sess.cardsServed++
+	if sess.citedDocs == nil {
+		sess.citedDocs = map[string]struct{}{}
+	}
+	for _, c := range card.Citations {
+		if c.Title != "" {
+			sess.citedDocs[c.Title] = struct{}{}
+		}
+	}
+}
+
+// stats snapshots the call's stats at session end.
+func (sess *session) stats() postcall.Stats {
+	sess.statsMu.Lock()
+	defer sess.statsMu.Unlock()
+	docs := make([]string, 0, len(sess.citedDocs))
+	for d := range sess.citedDocs {
+		docs = append(docs, d)
+	}
+	sort.Strings(docs)
+	return postcall.Stats{
+		StartedAt:        sess.startedAt,
+		DurationSeconds:  int(time.Since(sess.startedAt) / time.Second),
+		SuggestionsCount: sess.cardsServed,
+		Sources:          docs,
+	}
 }
 
 func (s *Server) handleRealtime(w http.ResponseWriter, r *http.Request) {
@@ -136,7 +180,7 @@ func (s *Server) handleRealtime(w http.ResponseWriter, r *http.Request) {
 	defer conn.Close()
 
 	s.log.Info("realtime session opened", "tenant", string(tid))
-	sess := &session{id: newSessionID(), tenantID: string(tid), meetingType: "internal"}
+	sess := &session{id: newSessionID(), tenantID: string(tid), meetingType: "internal", startedAt: time.Now()}
 
 	// Stage 10: every session end — deliberate stop or crash/drop — lands here;
 	// customer calls get summarized + persisted, internal calls leave no trace.
@@ -336,6 +380,7 @@ func (s *Server) sendSuggestion(conn *websocket.Conn, sess *session, sessionID, 
 	if hits == nil {
 		hits = []retrieval.SearchResult{} // marshal as [], not null
 	}
+	sess.recordCard(card)
 	elapsed := time.Since(start).Milliseconds()
 	suggestE2EDuration.Observe(float64(elapsed))
 	b, err := json.Marshal(suggestionMsg{Type: "suggestion", Ask: ask, Hits: hits, Card: card, ElapsedMs: elapsed})
@@ -405,7 +450,7 @@ func (s *Server) runPostcall(sess *session) {
 			}
 		}
 		sctx := tenancy.With(ctx, tenancy.TenantID(sess.tenantID))
-		if err := s.pcStore.SaveSummary(sctx, sess.customerName, sess.id, sum, vec); err != nil {
+		if err := s.pcStore.SaveSummary(sctx, sess.customerName, sess.id, sum, vec, sess.stats()); err != nil {
 			s.log.Warn("postcall: save failed", "err", err, "session", sess.id)
 			outcome = "save_error" // rep still sees the summary; it just isn't stored
 		} else {

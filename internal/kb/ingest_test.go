@@ -19,7 +19,7 @@ type fakeStore struct {
 	nextDocID   string
 }
 
-func (f *fakeStore) CreateDocument(_ context.Context, title string) (string, error) {
+func (f *fakeStore) CreateDocument(_ context.Context, title, _ string) (string, error) {
 	if f.createErr != nil {
 		return "", f.createErr
 	}
@@ -71,7 +71,7 @@ func TestIngestHappyPath(t *testing.T) {
 	em := &fakeIngestEmbedder{}
 	ing := NewIngester(em, st, 450, 60)
 
-	docID, n, err := ing.IngestDocument(context.Background(), "pricing.md", "# Plans\nBase plan costs money.")
+	docID, n, err := ing.IngestDocument(context.Background(), "pricing.md", "# Plans\nBase plan costs money.", "")
 	if err != nil {
 		t.Fatalf("ingest: %v", err)
 	}
@@ -94,7 +94,7 @@ func TestIngestEmbedFailureMarksFailed(t *testing.T) {
 	em := &fakeIngestEmbedder{err: errors.New("groq down")}
 	ing := NewIngester(em, st, 450, 60)
 
-	docID, _, err := ing.IngestDocument(context.Background(), "doc.md", "Some text here.")
+	docID, _, err := ing.IngestDocument(context.Background(), "doc.md", "Some text here.", "")
 	if err == nil {
 		t.Fatal("want error when embedding fails")
 	}
@@ -111,7 +111,7 @@ func TestIngestInsertFailureMarksFailed(t *testing.T) {
 	em := &fakeIngestEmbedder{}
 	ing := NewIngester(em, st, 450, 60)
 
-	docID, _, err := ing.IngestDocument(context.Background(), "doc.md", "Some text here.")
+	docID, _, err := ing.IngestDocument(context.Background(), "doc.md", "Some text here.", "")
 	if err == nil {
 		t.Fatal("want error when insert fails")
 	}
@@ -124,7 +124,7 @@ func TestIngestEmptyDocumentRejected(t *testing.T) {
 	st := &fakeStore{}
 	ing := NewIngester(&fakeIngestEmbedder{}, st, 450, 60)
 
-	_, _, err := ing.IngestDocument(context.Background(), "empty.md", "   \n\n ")
+	_, _, err := ing.IngestDocument(context.Background(), "empty.md", "   \n\n ", "")
 	if err == nil {
 		t.Fatal("want error for empty document")
 	}

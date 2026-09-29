@@ -110,7 +110,7 @@ func vec(dims int, x float32, rest ...float32) []float32 {
 func ingestDoc(t *testing.T, ctx context.Context, pool *pgxpool.Pool, title string, pieces []kb.Piece, vectors [][]float32) string {
 	t.Helper()
 	store := kb.NewStore(pool)
-	docID, err := store.CreateDocument(ctx, title)
+	docID, err := store.CreateDocument(ctx, title, "")
 	if err != nil {
 		t.Fatalf("create document: %v", err)
 	}

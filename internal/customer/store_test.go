@@ -58,7 +58,7 @@ func seedSummary(t *testing.T, pool *pgxpool.Pool, ctx context.Context, customer
 		Summary:     "Discussed pricing for " + customerName,
 		ActionItems: []string{"Send proposal"},
 		Unanswered:  []string{"Okta SSO?"},
-	}, nil)
+	}, nil, postcall.Stats{})
 	if err != nil {
 		t.Fatalf("seed summary: %v", err)
 	}

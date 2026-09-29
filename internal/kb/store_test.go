@@ -65,7 +65,7 @@ func TestStoreIngestRoundTrip(t *testing.T) {
 	ctx := newTestOrg(t, pool)
 	store := NewStore(pool)
 
-	docID, err := store.CreateDocument(ctx, "pricing.md")
+	docID, err := store.CreateDocument(ctx, "pricing.md", "")
 	if err != nil {
 		t.Fatalf("create document: %v", err)
 	}
@@ -110,7 +110,7 @@ func TestStoreTenantIsolation(t *testing.T) {
 	ctxB := newTestOrg(t, pool)
 	store := NewStore(pool)
 
-	docID, err := store.CreateDocument(ctxA, "secret-a.md")
+	docID, err := store.CreateDocument(ctxA, "secret-a.md", "")
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
@@ -135,7 +135,7 @@ func TestStoreMarkFailed(t *testing.T) {
 	ctx := newTestOrg(t, pool)
 	store := NewStore(pool)
 
-	docID, err := store.CreateDocument(ctx, "doomed.md")
+	docID, err := store.CreateDocument(ctx, "doomed.md", "")
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}

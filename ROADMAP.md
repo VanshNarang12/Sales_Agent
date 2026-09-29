@@ -189,8 +189,8 @@ per customer so the whole team keeps context across meetings.*
 - [x] **10.4** Action items / next-steps extraction — `9.2` (same LLM call as 10.3)
 - [x] **10.5** "Unanswered question" capture (content-gap signal) — `9.9` (same LLM call; Suggest-outcome signal deferred to Stage 13)
 - [~] **10.6** Persist the summary (+ action items + unanswered) against the tagged customer — `9.12` (code + tests done; live smoke test on a real call pending)
-- [~] **10.7** Customer context timeline: past summaries for a customer, team-visible — `9.13` (2026-09-17: 4 REST endpoints live; UI comes with the web app; live smoke test pending)
-- [~] **10.8** Meeting-prep chat: chat grounded in the customer's past summaries + the KB — `9.14` (2026-09-17: `POST /v1/customers/{id}/chat` — digests embedded per 0004, recency + semantic retrieval + KB chunks, all env-tunable; UI comes with the web app; live smoke test pending; delivers part of `25.2` early)
+- [~] **10.7** Customer context timeline: past summaries for a customer, team-visible — `9.13` (2026-09-17: 4 REST endpoints live; 2026-09-28: web-app UI live — /customers list + per-customer timeline; live smoke test on a real call pending)
+- [~] **10.8** Meeting-prep chat: chat grounded in the customer's past summaries + the KB — `9.14` (2026-09-17: `POST /v1/customers/{id}/chat` — digests embedded per 0004, recency + semantic retrieval + KB chunks, all env-tunable; 2026-09-28: web-app chat UI live on /customers/{id}; live smoke test pending; delivers part of `25.2` early)
 
 **Expectation:** every customer call ends with a summary, next steps, and content
 gaps — saved to that customer. Before the next meeting, any rep can open the prep

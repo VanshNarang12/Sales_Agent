@@ -34,6 +34,7 @@ type Server struct {
 	search     *retrieval.Searcher
 	suggest    *suggest.Generator
 	ingest     DocumentIngester
+	docList    DocumentLister
 	tstore     *transcript.Store
 	summarizer *postcall.Summarizer
 	pcStore    *postcall.Store
@@ -44,8 +45,8 @@ type Server struct {
 	log        *slog.Logger
 }
 
-func New(cfg *config.Config, signingKey string, sttMgr *stt.Manager, detectEng *detect.Engine, extractor *retrieval.Extractor, searcher *retrieval.Searcher, generator *suggest.Generator, ingester DocumentIngester, tstore *transcript.Store, summarizer *postcall.Summarizer, pcStore *postcall.Store, embedder embed.Embedder, custStore *customer.Store, chat *customer.Chat, idsvc *identity.Service, log *slog.Logger) *Server {
-	return &Server{cfg: cfg, signingKey: signingKey, stt: sttMgr, detect: detectEng, extract: extractor, search: searcher, suggest: generator, ingest: ingester, tstore: tstore, summarizer: summarizer, pcStore: pcStore, embedder: embedder, custStore: custStore, chat: chat, idsvc: idsvc, log: log}
+func New(cfg *config.Config, signingKey string, sttMgr *stt.Manager, detectEng *detect.Engine, extractor *retrieval.Extractor, searcher *retrieval.Searcher, generator *suggest.Generator, ingester DocumentIngester, docList DocumentLister, tstore *transcript.Store, summarizer *postcall.Summarizer, pcStore *postcall.Store, embedder embed.Embedder, custStore *customer.Store, chat *customer.Chat, idsvc *identity.Service, log *slog.Logger) *Server {
+	return &Server{cfg: cfg, signingKey: signingKey, stt: sttMgr, detect: detectEng, extract: extractor, search: searcher, suggest: generator, ingest: ingester, docList: docList, tstore: tstore, summarizer: summarizer, pcStore: pcStore, embedder: embedder, custStore: custStore, chat: chat, idsvc: idsvc, log: log}
 }
 
 // Handler builds the HTTP/WS routes with telemetry and auth wired in.
@@ -79,6 +80,11 @@ func (s *Server) Handler() http.Handler {
 	// Authenticated, tenant-scoped realtime endpoint.
 	mux.Handle("GET /v1/realtime", s.authMiddleware(http.HandlerFunc(s.handleRealtime)))
 	mux.Handle("POST /v1/documents", s.authMiddleware(http.HandlerFunc(s.handleDocumentUpload)))
+	mux.Handle("GET /v1/documents", s.authMiddleware(http.HandlerFunc(s.handleDocumentList)))
+
+	// Meetings: org-wide call history for the web app (migration 0007).
+	mux.Handle("GET /v1/meetings", s.authMiddleware(http.HandlerFunc(s.handleMeetingList)))
+	mux.Handle("GET /v1/meetings/{id}", s.authMiddleware(http.HandlerFunc(s.handleMeetingGet)))
 
 	// Customer memory: timeline + prep chat (Stage 10.7/10.8).
 	mux.Handle("GET /v1/customers", s.authMiddleware(http.HandlerFunc(s.handleCustomerList)))
@@ -87,7 +93,32 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET /v1/summaries/{id}", s.authMiddleware(http.HandlerFunc(s.handleSummaryGet)))
 	mux.Handle("POST /v1/customers/{id}/chat", s.authMiddleware(http.HandlerFunc(s.handleChat)))
 
-	return telemetry.HTTPMiddleware(s.cfg.ServiceName)(mux)
+	return telemetry.HTTPMiddleware(s.cfg.ServiceName)(s.corsMiddleware(mux))
+}
+
+// corsMiddleware admits the web app's browser origin (exact allowlist, no
+// wildcard). Non-browser clients (Electron WS, curl) send no Origin and pass
+// through untouched.
+func (s *Server) corsMiddleware(next http.Handler) http.Handler {
+	allowed := make(map[string]bool, len(s.cfg.CORSAllowedOrigins))
+	for _, o := range s.cfg.CORSAllowedOrigins {
+		allowed[o] = true
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if origin := r.Header.Get("Origin"); origin != "" && allowed[origin] {
+			h := w.Header()
+			h.Set("Access-Control-Allow-Origin", origin)
+			h.Set("Vary", "Origin")
+			h.Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+			h.Set("Access-Control-Allow-Headers", "Authorization, Content-Type")
+			h.Set("Access-Control-Max-Age", "600")
+			if r.Method == http.MethodOptions {
+				w.WriteHeader(http.StatusNoContent)
+				return
+			}
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 // authMiddleware verifies the bearer token and injects the tenant (org) into context.

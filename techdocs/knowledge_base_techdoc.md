@@ -145,7 +145,16 @@ CREATE TABLE kb_chunks (
 
 ## 7. APIs
 - `POST /v1/documents` — multipart file + title → `{document_id, status, chunk_count}`.
-  Tenant comes from the session, never from the request body.
+  Tenant comes from the session, never from the request body. Since 0008 the row is
+  stamped with `uploaded_by` = the caller's user id (from the verified token claims
+  the auth middleware puts in context) — accountability for the Documents UI now and
+  Stage-18 teams later.
+- `GET /v1/documents` (added 2026-09-27, for the web app's Documents page) — the
+  org's documents, newest first:
+  `{documents: [{document_id, title, status, chunk_count, uploaded_by_email, created_at}]}`.
+  `uploaded_by_email` joins users; NULL (pre-0008 rows) → `""` → UI shows "—".
+  No pagination yet: an org's document count is tens, not thousands (revisit with
+  Stage 16 bulk import).
 - Embed API down → 502, document marked `failed`, zero chunks written (one
   transaction). Nothing half-indexed, and live calls are never affected — ingest is
   control-plane only.
@@ -205,6 +214,11 @@ CREATE TABLE kb_chunks (
 | Semantic chunking | — | **rejected permanently** (54% vs 69%, 3–5x cost) — do not revisit |
 
 ## 14. Changelog
+- `2026-09-27` — **Documents list + uploader (for the web app's Documents page).**
+  Migration 0008: `uploaded_by UUID REFERENCES users(id)` on kb_documents (old rows
+  NULL). Upload path threads the caller's user id (`IngestDocument` gains an
+  `uploadedBy` param). New `GET /v1/documents` list endpoint (shape in §7). UI side
+  documented in web_app_techdoc.md. — Claude
 - `2026-09-12` — **Embedding provider corrected: Groq → Gemini.** First live upload
   502'd; direct curl proved Groq serves no embedding models (404, "model not
   found") — the 2026-08-30 choice never worked, hidden by fake-embedder tests.

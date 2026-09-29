@@ -34,7 +34,7 @@ func newFakeStore() *fakeStore {
 }
 
 func (f *fakeStore) CreateOrgWithUser(_ context.Context, orgName, email, hash, sub, _ string) (User, error) {
-	u := User{ID: uuid.NewString(), OrgID: uuid.NewString(), OrgName: orgName, Email: email, PasswordHash: hash, GoogleSub: sub}
+	u := User{ID: uuid.NewString(), OrgID: uuid.NewString(), OrgName: orgName, Email: email, Role: "admin", PasswordHash: hash, GoogleSub: sub}
 	f.users[u.ID] = &u
 	return u, nil
 }

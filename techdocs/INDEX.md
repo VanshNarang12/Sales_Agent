@@ -62,6 +62,7 @@ Status: `planned` · `in-progress` · `done`.
 | [`coding_standards_techdoc.md`](./coding_standards_techdoc.md) | all | — | §19, ADR-002 | done |
 | [`project_foundations_techdoc.md`](./project_foundations_techdoc.md) | Stage 0 | 0.1–0.9, `20.8`,`20.9`,`20.1`,`16.1`,`15.6`,`15.1`,`15.9`,`18.1` | §9,§13,§17 | in-progress |
 | [`auth_techdoc.md`](./auth_techdoc.md) — signup/login (argon2id + Google ID token), one-time WhatsApp OTP phone verification (Meta Cloud API), pre/full scopes, rotating refresh tokens | Stage 0 (0.5) | `16.1`,`16.13` | §4,§13 | in-progress |
+| [`web_app_techdoc.md`](./web_app_techdoc.md) — browser app in `../Sales_Agent_Web`: marketing site, auth screens (OTP, workspace picker), download/dashboard/profile console | Stage 0.5 / pre-12 | `16.1`,`16.13` UI | §4 | in-progress |
 | [`audio_capture_techdoc.md`](./audio_capture_techdoc.md) | Stage 1 | `1.1`–`1.6`,`1.8`,`1.12` | §10 | in-progress |
 | [`transcription_techdoc.md`](./transcription_techdoc.md) | Stage 2 | `2.1`–`2.6`,`2.10` | §7.1 | done |
 | [`detection_techdoc.md`](./detection_techdoc.md) — *Suggestion Trigger* (manual "Suggest" button; auto-detection removed) | Stage 3 | `3.1`–`3.4`,`3.11` | §7.2 | in-progress |
@@ -75,6 +76,7 @@ Status: `planned` · `in-progress` · `done`.
 | _sales_guidance_techdoc.md_ | ~~Stage 9~~ skipped 2026-09-14 (content rides the Suggest pipeline; guardrail → Stage 11, discovery/stall → Stage 15) | `6.5`,`3.6` (with `11.4`) | §7.4 | planned |
 | [`post_call_techdoc.md`](./post_call_techdoc.md) — meeting-type marker, WS-close summary/action-items/unanswered LLM call, customer + summary persistence (stored only, no UI/reply) | Stage 10 | `9.1`,`9.2`,`9.9`–`9.12` | §6 | done |
 | [`customer_memory_techdoc.md`](./customer_memory_techdoc.md) — timeline REST reads + meeting-prep chat (digest embeddings, recency + semantic retrieval + KB) | Stage 10 | `9.13`,`9.14` | §6,§9 | done |
+| [`meetings_api_techdoc.md`](./meetings_api_techdoc.md) — org-wide call history: live per-call stats (duration/cards/sources, 0007) + `GET /v1/meetings` list/detail for the web app | Stage 10 ext. | `9.12`,`9.13` | §4 | in-progress |
 | _admin_playbook_techdoc.md_ | Stage 11 | `12.1`–`12.4` | §4 | planned |
 | _billing_onboarding_techdoc.md_ | Stage 12 | `16.2`,`16.3`,`16.7`,`16.9`,`17.1`,`17.2` | §4 | planned |
 | [`realtime_gateway_techdoc.md`](./realtime_gateway_techdoc.md) | Stage 0/1 | gateway, WS, session, frame parsing | §4,§5 | in-progress |

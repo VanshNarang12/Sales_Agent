@@ -30,6 +30,7 @@ type User struct {
 	OrgID           string
 	OrgName         string
 	Email           string
+	Role            string // "admin" (org creator) or "member" (added via invite, Stage 18)
 	PasswordHash    string
 	GoogleSub       string
 	Phone           string
@@ -42,11 +43,11 @@ type Store struct{ pool *pgxpool.Pool }
 
 func NewStore(pool *pgxpool.Pool) *Store { return &Store{pool: pool} }
 
-const userCols = "id, org_id, email, COALESCE(password_hash,''), COALESCE(google_sub,''), COALESCE(phone,''), phone_verified_at"
+const userCols = "id, org_id, email, role, COALESCE(password_hash,''), COALESCE(google_sub,''), COALESCE(phone,''), phone_verified_at"
 
 func scanUser(row pgx.Row) (User, error) {
 	var u User
-	err := row.Scan(&u.ID, &u.OrgID, &u.Email, &u.PasswordHash, &u.GoogleSub, &u.Phone, &u.PhoneVerifiedAt)
+	err := row.Scan(&u.ID, &u.OrgID, &u.Email, &u.Role, &u.PasswordHash, &u.GoogleSub, &u.Phone, &u.PhoneVerifiedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return User{}, ErrUserNotFound
 	}
@@ -67,18 +68,15 @@ func (s *Store) CreateOrgWithUser(ctx context.Context, orgName, email, passwordH
 			return fmt.Errorf("insert org: %w", err)
 		}
 		_, err := tx.Exec(ctx,
-			`INSERT INTO users (id, org_id, email, password_hash, google_sub, oauth_provider)
-			 VALUES ($1, $2, $3, NULLIF($4,''), NULLIF($5,''), NULLIF($6,''))`,
+			`INSERT INTO users (id, org_id, email, role, password_hash, google_sub, oauth_provider)
+			 VALUES ($1, $2, $3, 'admin', NULLIF($4,''), NULLIF($5,''), NULLIF($6,''))`,
 			userID, orgID, email, passwordHash, googleSub, provider)
 		return err
 	})
-	if isUnique(err, "users_email_global_unique") {
-		return User{}, ErrEmailTaken
-	}
 	if err != nil {
 		return User{}, fmt.Errorf("create org+user: %w", err)
 	}
-	return User{ID: userID, OrgID: orgID, Email: email, PasswordHash: passwordHash, GoogleSub: googleSub}, nil
+	return User{ID: userID, OrgID: orgID, OrgName: orgName, Email: email, Role: "admin", PasswordHash: passwordHash, GoogleSub: googleSub}, nil
 }
 
 // FindAllByEmail returns every account holding the email, across orgs, with org
@@ -95,7 +93,7 @@ func (s *Store) FindAllByEmail(ctx context.Context, email string) ([]User, error
 		return nil, fmt.Errorf("set login guc: %w", err)
 	}
 	rows, err := tx.Query(ctx, `
-		SELECT u.id, u.org_id, COALESCE(o.name,''), u.email, COALESCE(u.password_hash,''),
+		SELECT u.id, u.org_id, COALESCE(o.name,''), u.email, u.role, COALESCE(u.password_hash,''),
 		       COALESCE(u.google_sub,''), COALESCE(u.phone,''), u.phone_verified_at
 		FROM users u LEFT JOIN orgs o ON o.id = u.org_id
 		WHERE lower(u.email) = $1
@@ -107,7 +105,7 @@ func (s *Store) FindAllByEmail(ctx context.Context, email string) ([]User, error
 	var out []User
 	for rows.Next() {
 		var u User
-		if err := rows.Scan(&u.ID, &u.OrgID, &u.OrgName, &u.Email, &u.PasswordHash, &u.GoogleSub, &u.Phone, &u.PhoneVerifiedAt); err != nil {
+		if err := rows.Scan(&u.ID, &u.OrgID, &u.OrgName, &u.Email, &u.Role, &u.PasswordHash, &u.GoogleSub, &u.Phone, &u.PhoneVerifiedAt); err != nil {
 			return nil, fmt.Errorf("scan login user: %w", err)
 		}
 		out = append(out, u)

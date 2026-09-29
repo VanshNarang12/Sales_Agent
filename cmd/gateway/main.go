@@ -78,7 +78,11 @@ func run(log *slog.Logger) error {
 	detectEng := buildDetect(cfg, tstore, log)
 	extractor := buildExtract(ctx, cfg, log)
 	pool, embedder := buildKB(ctx, cfg, log)
-	ingester := buildIngest(pool, embedder, cfg, log)
+	var kbStore *kb.Store
+	if pool != nil {
+		kbStore = kb.NewStore(pool)
+	}
+	ingester := buildIngest(kbStore, embedder, cfg, log)
 	searcher := buildSearch(pool, embedder, cfg, log)
 	generator := buildSuggest(ctx, cfg, log)
 	summarizer := buildPostcall(ctx, cfg, log)
@@ -95,7 +99,7 @@ func run(log *slog.Logger) error {
 
 	srv := &http.Server{
 		Addr:              cfg.HTTPAddr,
-		Handler:           gateway.New(cfg, signingKey, sttMgr, detectEng, extractor, searcher, generator, ingester, tstore, summarizer, pcStore, embedder, custStore, chat, idsvc, log).Handler(),
+		Handler:           gateway.New(cfg, signingKey, sttMgr, detectEng, extractor, searcher, generator, ingester, docLister(kbStore), tstore, summarizer, pcStore, embedder, custStore, chat, idsvc, log).Handler(),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
@@ -330,14 +334,23 @@ func buildKB(ctx context.Context, cfg *config.Config, log *slog.Logger) (*pgxpoo
 	return pool, embedder
 }
 
+// docLister maps a nil *kb.Store to a nil interface (a typed-nil inside a non-nil
+// interface would dodge the handler's nil check).
+func docLister(store *kb.Store) gateway.DocumentLister {
+	if store == nil {
+		return nil
+	}
+	return store
+}
+
 // buildIngest wires Stage-4 upload. Missing deps ⇒ nil ⇒ POST /v1/documents answers 503.
-func buildIngest(pool *pgxpool.Pool, embedder embed.Embedder, cfg *config.Config, log *slog.Logger) gateway.DocumentIngester {
-	if pool == nil || embedder == nil {
+func buildIngest(store *kb.Store, embedder embed.Embedder, cfg *config.Config, log *slog.Logger) gateway.DocumentIngester {
+	if store == nil || embedder == nil {
 		log.Warn("ingest disabled: missing KB dependencies")
 		return nil
 	}
 	log.Info("ingest enabled", "embed_provider", cfg.EmbedProvider, "embed_model", cfg.EmbedModel)
-	return kb.NewIngester(embedder, kb.NewStore(pool), cfg.ChunkTargetTokens, cfg.ChunkOverlapTokens)
+	return kb.NewIngester(embedder, store, cfg.ChunkTargetTokens, cfg.ChunkOverlapTokens)
 }
 
 // buildSearch wires Stage-5 retrieval. Missing deps ⇒ nil ⇒ Suggest logs the ask only.

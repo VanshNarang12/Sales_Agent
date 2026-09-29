@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -22,19 +23,61 @@ func NewStore(pool *pgxpool.Pool) *Store {
 	return &Store{pool: pool}
 }
 
-// CreateDocument inserts the document row in status 'processing' and returns its id.
-func (s *Store) CreateDocument(ctx context.Context, title string) (string, error) {
+// CreateDocument inserts the document row in status 'processing' and returns its
+// id. uploadedBy is the caller's user id (0008); empty (dev bypass) stores NULL.
+func (s *Store) CreateDocument(ctx context.Context, title, uploadedBy string) (string, error) {
 	var id string
 	err := db.WithTenantTx(ctx, s.pool, func(tx pgx.Tx) error {
 		return tx.QueryRow(ctx,
-			`INSERT INTO kb_documents (org_id, title, status)
-			 VALUES (current_setting('app.tenant_id')::uuid, $1, 'processing')
-			 RETURNING id`, title).Scan(&id)
+			`INSERT INTO kb_documents (org_id, title, status, uploaded_by)
+			 VALUES (current_setting('app.tenant_id')::uuid, $1, 'processing', NULLIF($2,'')::uuid)
+			 RETURNING id`, title, uploadedBy).Scan(&id)
 	})
 	if err != nil {
 		return "", fmt.Errorf("kb create document: %w", err)
 	}
 	return id, nil
+}
+
+// DocumentInfo is one row of the Documents page list.
+type DocumentInfo struct {
+	ID              string    `json:"document_id"`
+	Title           string    `json:"title"`
+	Status          string    `json:"status"`
+	ChunkCount      int       `json:"chunk_count"`
+	UploadedByEmail string    `json:"uploaded_by_email"` // "" when unknown (pre-0008)
+	CreatedAt       time.Time `json:"created_at"`
+}
+
+// ListDocuments returns the org's documents, newest first, with uploader email
+// and indexed-chunk count. No pagination: an org's docs are tens, not thousands
+// (revisit with Stage 16 bulk import).
+func (s *Store) ListDocuments(ctx context.Context) ([]DocumentInfo, error) {
+	var out []DocumentInfo
+	err := db.WithTenantTx(ctx, s.pool, func(tx pgx.Tx) error {
+		rows, err := tx.Query(ctx, `
+			SELECT d.id, d.title, d.status, d.created_at, COALESCE(u.email, ''),
+			       (SELECT count(*) FROM kb_chunks c WHERE c.document_id = d.id)
+			FROM kb_documents d
+			LEFT JOIN users u ON u.id = d.uploaded_by
+			ORDER BY d.created_at DESC, d.id DESC`)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var doc DocumentInfo
+			if err := rows.Scan(&doc.ID, &doc.Title, &doc.Status, &doc.CreatedAt, &doc.UploadedByEmail, &doc.ChunkCount); err != nil {
+				return err
+			}
+			out = append(out, doc)
+		}
+		return rows.Err()
+	})
+	if err != nil {
+		return nil, fmt.Errorf("kb list documents: %w", err)
+	}
+	return out, nil
 }
 
 // InsertChunks bulk-writes all chunk rows and flips the document to 'ready' in ONE

@@ -149,6 +149,7 @@ func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 		"user_id":        u.ID,
 		"org_id":         u.OrgID,
 		"email":          u.Email,
+		"role":           u.Role,
 		"phone_verified": u.PhoneVerifiedAt != nil,
 		"scope":          claims.Scope,
 	})
