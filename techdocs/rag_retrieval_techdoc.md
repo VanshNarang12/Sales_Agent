@@ -79,8 +79,16 @@ stacked clicks.
 
 ## 6. Data model & storage
 No new tables. Reads `kb_chunks` (embedding, chunk_text, heading, position) joined
-to `kb_documents` (title, status). Tenant comes from ctx via `db.WithTenantTx`;
-RLS filters every row. Nothing is written; the query text is not stored.
+to `kb_documents` (title, status). Tenant comes from ctx via `db.WithTenantBatch`
+(REVISED 2026-10-06, latency): the GUC set + search SQL ship as one pgx batch =
+one wire round trip inside a single implicit transaction, vs `WithTenantTx`'s 5
+(BEGIN/set/query/COMMIT ≈ 1.4 s against remote Neon from dev). RLS semantics are
+identical — verified against the Neon pooler: the transaction-local tenant GUC is
+visible to later batch statements and gone afterwards; a failed set aborts the
+batch (fail-closed). Nothing is written; the query text is not stored.
+Multi-ask (2026-10-06): `SearchMulti(ctx, asks)` answers N asks at the wire cost
+of one — a single embedding call (the embed API takes a list) and all N vector
+SELECTs queued into the same one-round-trip batch; `Search` is now the N=1 case.
 
 ## 7. APIs / events
 - **Inbound:** called in-process by the gateway's querySink after extraction.

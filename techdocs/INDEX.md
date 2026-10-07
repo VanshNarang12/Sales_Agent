@@ -77,7 +77,7 @@ Status: `planned` · `in-progress` · `done`.
 | [`post_call_techdoc.md`](./post_call_techdoc.md) — meeting-type marker, WS-close summary/action-items/unanswered LLM call, customer + summary persistence (stored only, no UI/reply) | Stage 10 | `9.1`,`9.2`,`9.9`–`9.12` | §6 | done |
 | [`customer_memory_techdoc.md`](./customer_memory_techdoc.md) — timeline REST reads + meeting-prep chat (digest embeddings, recency + semantic retrieval + KB) | Stage 10 | `9.13`,`9.14` | §6,§9 | done |
 | [`meetings_api_techdoc.md`](./meetings_api_techdoc.md) — org-wide call history: live per-call stats (duration/cards/sources, 0007) + `GET /v1/meetings` list/detail for the web app | Stage 10 ext. | `9.12`,`9.13` | §4 | in-progress |
-| _admin_playbook_techdoc.md_ | Stage 11 | `12.1`–`12.4` | §4 | planned |
+| [`admin_playbook_techdoc.md`](./admin_playbook_techdoc.md) — org guidance + do-not-say rules, prompt-injected into card generation (no post-check, user decision) | Stage 11 | `12.1`,`12.4`,`6.5` | §4,§7.4 | in-progress |
 | _billing_onboarding_techdoc.md_ | Stage 12 | `16.2`,`16.3`,`16.7`,`16.9`,`17.1`,`17.2` | §4 | planned |
 | [`realtime_gateway_techdoc.md`](./realtime_gateway_techdoc.md) | Stage 0/1 | gateway, WS, session, frame parsing | §4,§5 | in-progress |
 | _orchestrator_techdoc.md_ | Stage 1–7 | call session orchestration | §4,§5 | planned |

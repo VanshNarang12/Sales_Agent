@@ -25,6 +25,7 @@ type openAIClient struct {
 	apiKey  string
 	model   string
 	maxTok  int64
+	effort  string
 }
 
 func newOpenAICompatible(cfg Config) (Completer, error) {
@@ -41,13 +42,15 @@ func newOpenAICompatible(cfg Config) (Completer, error) {
 		apiKey:  cfg.APIKey, // may be empty for local servers (Ollama/vLLM)
 		model:   cfg.Model,
 		maxTok:  cfg.MaxTokens,
+		effort:  cfg.ReasoningEffort,
 	}, nil
 }
 
 type oaiRequest struct {
-	Model     string       `json:"model"`
-	MaxTokens int64        `json:"max_tokens,omitempty"`
-	Messages  []oaiMessage `json:"messages"`
+	Model           string       `json:"model"`
+	MaxTokens       int64        `json:"max_tokens,omitempty"`
+	ReasoningEffort string       `json:"reasoning_effort,omitempty"`
+	Messages        []oaiMessage `json:"messages"`
 }
 
 type oaiMessage struct {
@@ -66,8 +69,9 @@ type oaiResponse struct {
 
 func (c *openAIClient) Complete(ctx context.Context, system, user string) (string, error) {
 	body, err := json.Marshal(oaiRequest{
-		Model:     c.model,
-		MaxTokens: c.maxTok,
+		Model:           c.model,
+		MaxTokens:       c.maxTok,
+		ReasoningEffort: c.effort,
 		Messages: []oaiMessage{
 			{Role: "system", Content: system},
 			{Role: "user", Content: user},

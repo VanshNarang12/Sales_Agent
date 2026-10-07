@@ -13,10 +13,12 @@ import (
 	"github.com/VanshNarang12/sales-agent/internal/detect"
 	"github.com/VanshNarang12/sales-agent/internal/embed"
 	"github.com/VanshNarang12/sales-agent/internal/identity"
+	"github.com/VanshNarang12/sales-agent/internal/jobs"
 	"github.com/VanshNarang12/sales-agent/internal/platform/auth"
 	"github.com/VanshNarang12/sales-agent/internal/platform/config"
 	"github.com/VanshNarang12/sales-agent/internal/platform/telemetry"
 	"github.com/VanshNarang12/sales-agent/internal/platform/tenancy"
+	"github.com/VanshNarang12/sales-agent/internal/playbook"
 	"github.com/VanshNarang12/sales-agent/internal/postcall"
 	"github.com/VanshNarang12/sales-agent/internal/retrieval"
 	"github.com/VanshNarang12/sales-agent/internal/stt"
@@ -42,11 +44,13 @@ type Server struct {
 	custStore  *customer.Store
 	chat       *customer.Chat
 	idsvc      *identity.Service
+	jobq       *jobs.Queue
+	pbStore    *playbook.Store
 	log        *slog.Logger
 }
 
-func New(cfg *config.Config, signingKey string, sttMgr *stt.Manager, detectEng *detect.Engine, extractor *retrieval.Extractor, searcher *retrieval.Searcher, generator *suggest.Generator, ingester DocumentIngester, docList DocumentLister, tstore *transcript.Store, summarizer *postcall.Summarizer, pcStore *postcall.Store, embedder embed.Embedder, custStore *customer.Store, chat *customer.Chat, idsvc *identity.Service, log *slog.Logger) *Server {
-	return &Server{cfg: cfg, signingKey: signingKey, stt: sttMgr, detect: detectEng, extract: extractor, search: searcher, suggest: generator, ingest: ingester, docList: docList, tstore: tstore, summarizer: summarizer, pcStore: pcStore, embedder: embedder, custStore: custStore, chat: chat, idsvc: idsvc, log: log}
+func New(cfg *config.Config, signingKey string, sttMgr *stt.Manager, detectEng *detect.Engine, extractor *retrieval.Extractor, searcher *retrieval.Searcher, generator *suggest.Generator, ingester DocumentIngester, docList DocumentLister, tstore *transcript.Store, summarizer *postcall.Summarizer, pcStore *postcall.Store, embedder embed.Embedder, custStore *customer.Store, chat *customer.Chat, idsvc *identity.Service, jobq *jobs.Queue, pbStore *playbook.Store, log *slog.Logger) *Server {
+	return &Server{cfg: cfg, signingKey: signingKey, stt: sttMgr, detect: detectEng, extract: extractor, search: searcher, suggest: generator, ingest: ingester, docList: docList, tstore: tstore, summarizer: summarizer, pcStore: pcStore, embedder: embedder, custStore: custStore, chat: chat, idsvc: idsvc, jobq: jobq, pbStore: pbStore, log: log}
 }
 
 // Handler builds the HTTP/WS routes with telemetry and auth wired in.
@@ -85,6 +89,13 @@ func (s *Server) Handler() http.Handler {
 	// Meetings: org-wide call history for the web app (migration 0007).
 	mux.Handle("GET /v1/meetings", s.authMiddleware(http.HandlerFunc(s.handleMeetingList)))
 	mux.Handle("GET /v1/meetings/{id}", s.authMiddleware(http.HandlerFunc(s.handleMeetingGet)))
+	mux.Handle("PATCH /v1/meetings/{id}/customer", s.authMiddleware(http.HandlerFunc(s.handleMeetingTag)))
+
+	// Playbook: org guidance + do-not-say rules (Stage 11). Writes are admin-only.
+	mux.Handle("GET /v1/playbook", s.authMiddleware(http.HandlerFunc(s.handlePlaybookGet)))
+	mux.Handle("PUT /v1/playbook", s.authMiddleware(http.HandlerFunc(s.handlePlaybookPut)))
+	mux.Handle("POST /v1/playbook/rules", s.authMiddleware(http.HandlerFunc(s.handleRuleAdd)))
+	mux.Handle("DELETE /v1/playbook/rules/{id}", s.authMiddleware(http.HandlerFunc(s.handleRuleDelete)))
 
 	// Customer memory: timeline + prep chat (Stage 10.7/10.8).
 	mux.Handle("GET /v1/customers", s.authMiddleware(http.HandlerFunc(s.handleCustomerList)))
@@ -109,7 +120,7 @@ func (s *Server) corsMiddleware(next http.Handler) http.Handler {
 			h := w.Header()
 			h.Set("Access-Control-Allow-Origin", origin)
 			h.Set("Vary", "Origin")
-			h.Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+			h.Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
 			h.Set("Access-Control-Allow-Headers", "Authorization, Content-Type")
 			h.Set("Access-Control-Max-Age", "600")
 			if r.Method == http.MethodOptions {

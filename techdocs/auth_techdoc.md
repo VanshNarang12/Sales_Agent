@@ -206,6 +206,11 @@ signup/login/otp events tenant-tagged, **never** the password, code, or full pho
 - Turn `AUTH_DISABLED` off as the dev default once clients have login UIs.
 
 ## 14. Changelog
+- `2026-09-29` — Google sign-in went live: web OAuth client created
+  (project salescopilot-510115, consent screen in Testing mode — publish before
+  real users), `GOOGLE_CLIENT_IDS` set, web app gained GoogleButton (GIS popup →
+  id_token → /v1/auth/google) on login + signup. WhatsApp still blocked on
+  Meta's portfolio review (see memory/whatsapp-setup-status). — Claude
 - `2026-09-28` — Desktop client login built per §12b (Sales_Agent_Frontend):
   `src/auth.ts` main-process token owner (safeStorage persistence, 10-min refresh
   loop, header injection incl. WS upgrade), IPC bridge, login view with workspace

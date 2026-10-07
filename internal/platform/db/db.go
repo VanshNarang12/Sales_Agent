@@ -32,6 +32,32 @@ func Connect(ctx context.Context, dsn string) (*pgxpool.Pool, error) {
 	return pool, nil
 }
 
+// WithTenantBatch pipelines fn's queued queries — with the RLS tenant GUC set
+// first — into ONE wire round trip (vs WithTenantTx's 5: BEGIN/set/query/.../COMMIT),
+// for latency-critical reads against a remote DB. All statements in a pgx batch
+// run in a single implicit transaction (verified against the Neon pooler
+// 2026-10-06: the transaction-local app.tenant_id is visible to later batch
+// statements and gone afterwards), so RLS scoping is identical to WithTenantTx.
+// fn must queue plain queries only — no BEGIN/COMMIT, which would break the
+// single-transaction property. handle reads results in queue order; the
+// set_config result is consumed here. If set_config fails, Postgres aborts the
+// batch and no queued query runs (fail-closed).
+func WithTenantBatch(ctx context.Context, pool *pgxpool.Pool, fn func(b *pgx.Batch), handle func(br pgx.BatchResults) error) error {
+	tid, err := tenancy.MustFrom(ctx)
+	if err != nil {
+		return err
+	}
+	b := &pgx.Batch{}
+	b.Queue("SELECT set_config('app.tenant_id', $1, true)", string(tid))
+	fn(b)
+	br := pool.SendBatch(ctx, b)
+	defer br.Close()
+	if _, err := br.Exec(); err != nil {
+		return fmt.Errorf("set tenant: %w", err)
+	}
+	return handle(br)
+}
+
 // WithTenantTx runs fn inside a transaction whose RLS tenant context is set from ctx.
 // Every customer-data query must go through a tenant-scoped transaction.
 func WithTenantTx(ctx context.Context, pool *pgxpool.Pool, fn func(pgx.Tx) error) error {

@@ -19,6 +19,7 @@ import (
 
 	"github.com/VanshNarang12/sales-agent/internal/detect"
 	"github.com/VanshNarang12/sales-agent/internal/embed"
+	"github.com/VanshNarang12/sales-agent/internal/jobs"
 	"github.com/VanshNarang12/sales-agent/internal/platform/tenancy"
 	"github.com/VanshNarang12/sales-agent/internal/postcall"
 	"github.com/VanshNarang12/sales-agent/internal/retrieval"
@@ -93,6 +94,11 @@ type suggestionMsg struct {
 	Hits      []retrieval.SearchResult `json:"hits"`
 	Card      *suggest.Card            `json:"card,omitempty"`
 	ElapsedMs int64                    `json:"elapsed_ms"` // click received → this write (6.8)
+	// Multi-card (2026-10-06): one click can answer up to 3 pending asks; each
+	// arrives as its own message as it finishes. Index orders them, count tells
+	// the client how many to expect. Single-ask clicks send 0/1 as before.
+	AskIndex int `json:"ask_index"`
+	AskCount int `json:"ask_count"`
 }
 
 type transcriptMsg struct {
@@ -320,40 +326,59 @@ func (s *Server) querySink(conn *websocket.Conn, sess *session) detect.EmitFunc 
 		// (6.8) is measured by suggest_e2e_duration_ms, not enforced here.
 		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 		defer cancel()
-		ask, err := s.extract.Extract(ctx, q)
+		asks, err := s.extract.Extract(ctx, q)
+		extractMs := time.Since(start).Milliseconds()
 		if err != nil {
 			s.log.Warn("extraction failed; no suggestion", "err", err, "session", q.SessionID)
 			suggestOutcomes.WithLabelValues("extract_error").Inc()
 			return
 		}
-		if ask == "" {
+		if len(asks) == 0 {
 			s.log.Info("suggest: no ask in window", "session", q.SessionID)
 			suggestOutcomes.WithLabelValues("no_ask").Inc()
-			s.sendSuggestion(conn, sess, q.SessionID, "", nil, nil, start)
+			s.sendSuggestion(conn, sess, q.SessionID, "", nil, nil, start, 0, 1)
 			return
 		}
 		if s.search == nil {
-			fmt.Printf("[suggest] session=%s ask=%q\n", q.SessionID, ask)
+			fmt.Printf("[suggest] session=%s asks=%d\n", q.SessionID, len(asks))
 			return
 		}
 		// Search needs the tenant in ctx: RLS scopes the SQL to this org's chunks.
-		hits, err := s.search.Search(tenancy.With(ctx, tenancy.TenantID(q.TenantID)), ask)
+		// All asks share one embedding call and one DB round trip (SearchMulti).
+		searchStart := time.Now()
+		hitsPerAsk, err := s.search.SearchMulti(tenancy.With(ctx, tenancy.TenantID(q.TenantID)), asks)
 		if err != nil {
 			s.log.Warn("search failed; no suggestion", "err", err, "session", q.SessionID)
 			suggestOutcomes.WithLabelValues("search_error").Inc()
 			return
 		}
-		s.log.Info("suggest: searched", "session", q.SessionID, "hits", len(hits))
-		card, outcome := s.generateCard(ctx, q.SessionID, ask, hits)
-		suggestOutcomes.WithLabelValues(outcome).Inc()
-		s.sendSuggestion(conn, sess, q.SessionID, ask, hits, card, start)
+		totalHits := 0
+		for _, h := range hitsPerAsk {
+			totalHits += len(h)
+		}
+		s.log.Info("suggest: searched", "session", q.SessionID, "asks", len(asks), "hits", totalHits,
+			"extract_ms", extractMs, "search_ms", time.Since(searchStart).Milliseconds())
+		// One generate call per ask, in parallel; each card ships the moment it is
+		// ready (writeMu serializes the socket). Waiting here keeps the detect
+		// engine's in-flight guard held until the last card is out.
+		var wg sync.WaitGroup
+		for i := range asks {
+			wg.Add(1)
+			go func(i int) {
+				defer wg.Done()
+				card, outcome := s.generateCard(ctx, q.TenantID, q.SessionID, asks[i], hitsPerAsk[i])
+				suggestOutcomes.WithLabelValues(outcome).Inc()
+				s.sendSuggestion(conn, sess, q.SessionID, asks[i], hitsPerAsk[i], card, start, i, len(asks))
+			}(i)
+		}
+		wg.Wait()
 	}
 }
 
 // generateCard runs the Stage-6 answer call. A nil card means no card — the
 // suggestion message still goes out with the raw hits. The outcome string feeds
 // suggest_outcomes_total. Logs never carry card text.
-func (s *Server) generateCard(ctx context.Context, sessionID, ask string, hits []retrieval.SearchResult) (*suggest.Card, string) {
+func (s *Server) generateCard(ctx context.Context, tenantID, sessionID, ask string, hits []retrieval.SearchResult) (*suggest.Card, string) {
 	switch {
 	case len(hits) == 0:
 		return nil, "no_hits"
@@ -363,8 +388,18 @@ func (s *Server) generateCard(ctx context.Context, sessionID, ask string, hits [
 		s.log.Info("suggest: card gated by confidence", "session", sessionID, "top_score", hits[0].Score)
 		return nil, "gated"
 	}
+	// Stage 11: the org playbook rides the system prompt. A read failure means a
+	// card without the playbook, never no card.
+	block := ""
+	if s.pbStore != nil {
+		if pb, err := s.pbStore.Get(tenancy.With(ctx, tenancy.TenantID(tenantID))); err != nil {
+			s.log.Warn("suggest: playbook read failed; generating without it", "err", err, "session", sessionID)
+		} else {
+			block = pb.PromptBlock()
+		}
+	}
 	start := time.Now()
-	card, err := s.suggest.Generate(ctx, ask, hits)
+	card, err := s.suggest.Generate(ctx, ask, hits, block)
 	if err != nil {
 		s.log.Warn("card generation failed; sending hits only", "err", err, "session", sessionID)
 		return nil, "generate_error"
@@ -376,14 +411,15 @@ func (s *Server) generateCard(ctx context.Context, sessionID, ask string, hits [
 	return card, "card"
 }
 
-func (s *Server) sendSuggestion(conn *websocket.Conn, sess *session, sessionID, ask string, hits []retrieval.SearchResult, card *suggest.Card, start time.Time) {
+func (s *Server) sendSuggestion(conn *websocket.Conn, sess *session, sessionID, ask string, hits []retrieval.SearchResult, card *suggest.Card, start time.Time, askIndex, askCount int) {
 	if hits == nil {
 		hits = []retrieval.SearchResult{} // marshal as [], not null
 	}
 	sess.recordCard(card)
 	elapsed := time.Since(start).Milliseconds()
 	suggestE2EDuration.Observe(float64(elapsed))
-	b, err := json.Marshal(suggestionMsg{Type: "suggestion", Ask: ask, Hits: hits, Card: card, ElapsedMs: elapsed})
+	b, err := json.Marshal(suggestionMsg{Type: "suggestion", Ask: ask, Hits: hits, Card: card, ElapsedMs: elapsed,
+		AskIndex: askIndex, AskCount: askCount})
 	if err != nil {
 		return
 	}
@@ -400,6 +436,19 @@ func (s *Server) sendSuggestion(conn *websocket.Conn, sess *session, sessionID, 
 // Internal meetings do nothing at all (D5). Summary text never hits the logs.
 // Delivery to humans (e.g. a post-call email) is a future feature — nothing is
 // sent to the client.
+// postcallPayload is the durable job body (jobs table, migration 0010): the
+// pointer to the transcript (session id) + call metadata — never the transcript
+// itself, which stays in Redis so the expiry promise holds.
+type postcallPayload struct {
+	TenantID     string         `json:"tenant_id"`
+	SessionID    string         `json:"session_id"`
+	CustomerName string         `json:"customer_name"`
+	Stats        postcall.Stats `json:"stats"`
+}
+
+// runPostcall fires on every session end. Customer calls become a durable job —
+// one INSERT — so a gateway restart can't lose the summary. If the queue isn't
+// available the old inline path runs as the fallback (never worse than before).
 func (s *Server) runPostcall(sess *session) {
 	if sess.meetingType != "customer" {
 		postcallOutcomes.WithLabelValues("internal_skip").Inc()
@@ -409,56 +458,107 @@ func (s *Server) runPostcall(sess *session) {
 		postcallOutcomes.WithLabelValues("disabled").Inc()
 		return
 	}
-	start := time.Now()
-	// Own context: the WS request context dies with the connection, and the
-	// fallback path runs exactly then. 60 s covers a long transcript.
+	p := postcallPayload{
+		TenantID:     sess.tenantID,
+		SessionID:    sess.id,
+		CustomerName: sess.customerName,
+		Stats:        sess.stats(),
+	}
+	if s.jobq != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := s.jobq.Enqueue(ctx, sess.tenantID, "postcall_summary", p); err == nil {
+			s.log.Info("postcall: job enqueued", "session", sess.id)
+			return
+		} else {
+			s.log.Warn("postcall: enqueue failed; processing inline", "err", err, "session", sess.id)
+		}
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
+	_ = s.processPostcall(ctx, p)
+}
 
-	entries, err := s.tstore.Full(ctx, sess.tenantID, sess.id)
+// ProcessPostcallJob is the jobs-worker handler for kind "postcall_summary".
+// A returned error = the worker retries (backoff), then parks the job as failed.
+func (s *Server) ProcessPostcallJob(ctx context.Context, job *jobs.Job) error {
+	var p postcallPayload
+	if err := json.Unmarshal(job.Payload, &p); err != nil {
+		return fmt.Errorf("postcall job payload: %w", err)
+	}
+	cctx, cancel := context.WithTimeout(ctx, 60*time.Second)
+	defer cancel()
+	return s.processPostcall(cctx, p)
+}
+
+// processPostcall is the pipeline: transcript → summary LLM (with quick retries)
+// → embed → persist. Shared by the worker and the inline fallback.
+func (s *Server) processPostcall(ctx context.Context, p postcallPayload) error {
+	start := time.Now()
+	entries, err := s.tstore.Full(ctx, p.TenantID, p.SessionID)
 	if err != nil {
-		s.log.Warn("postcall: transcript read failed", "err", err, "session", sess.id)
 		postcallOutcomes.WithLabelValues("transcript_error").Inc()
-		return
+		return fmt.Errorf("transcript read: %w", err)
 	}
 	if len(entries) == 0 {
+		// Nothing to summarize — includes "transcript expired before the last
+		// retry". Terminal and correct under the expiry promise, not an error.
 		postcallOutcomes.WithLabelValues("empty_transcript").Inc()
-		return
+		return nil
 	}
-	sum, err := s.summarizer.Summarize(ctx, entries)
-	if err != nil || sum == nil {
-		if err != nil {
-			s.log.Warn("postcall: summary failed", "err", err, "session", sess.id)
+	// Up to 3 attempts (waits 2 s then 5 s) inside the 60 s budget: the call is
+	// already over, so waiting costs nothing — a transient LLM error must not
+	// cost the summary (post_call_techdoc.md §13b).
+	var sum *postcall.Summary
+	for attempt, wait := range []time.Duration{0, 2 * time.Second, 5 * time.Second} {
+		if wait > 0 {
+			select {
+			case <-time.After(wait):
+			case <-ctx.Done():
+			}
 		}
+		if ctx.Err() != nil {
+			break
+		}
+		sum, err = s.summarizer.Summarize(ctx, entries)
+		if err == nil && sum != nil {
+			break
+		}
+		s.log.Warn("postcall: summary attempt failed", "attempt", attempt+1, "err", err, "session", p.SessionID)
+	}
+	if err != nil || sum == nil {
 		postcallOutcomes.WithLabelValues("llm_error").Inc()
-		return
+		return fmt.Errorf("summary llm: %w", err)
 	}
 	elapsed := time.Since(start).Milliseconds()
 	postcallDuration.Observe(float64(elapsed))
 
-	outcome, saved := "summary", false
-	if s.pcStore != nil && sess.customerName != "" {
-		// Embed the digest for the prep chat's semantic search. Same model+space
-		// as KB chunks. Failure = save without embedding, never lose the summary.
-		var vec []float32
-		if s.embedder != nil {
-			digest := sum.Summary + "\n" + strings.Join(sum.ActionItems, "\n") + "\n" + strings.Join(sum.Unanswered, "\n")
-			if vecs, err := s.embedder.Embed(ctx, embed.PrefixDocument, []string{digest}); err != nil {
-				s.log.Warn("postcall: embed failed; saving without embedding", "err", err, "session", sess.id)
-			} else if len(vecs) == 1 {
-				vec = vecs[0]
-			}
-		}
-		sctx := tenancy.With(ctx, tenancy.TenantID(sess.tenantID))
-		if err := s.pcStore.SaveSummary(sctx, sess.customerName, sess.id, sum, vec, sess.stats()); err != nil {
-			s.log.Warn("postcall: save failed", "err", err, "session", sess.id)
-			outcome = "save_error" // rep still sees the summary; it just isn't stored
-		} else {
-			saved = true
+	// Untagged calls save too (customer_id NULL) — taggable later from the web
+	// app's Meetings page. Only a missing store skips persistence now.
+	if s.pcStore == nil {
+		postcallOutcomes.WithLabelValues("summary").Inc()
+		return nil
+	}
+	// Embed the digest for the prep chat's semantic search. Same model+space
+	// as KB chunks. Failure = save without embedding, never lose the summary.
+	var vec []float32
+	if s.embedder != nil {
+		digest := sum.Summary + "\n" + strings.Join(sum.ActionItems, "\n") + "\n" + strings.Join(sum.Unanswered, "\n")
+		if vecs, err := s.embedder.Embed(ctx, embed.PrefixDocument, []string{digest}); err != nil {
+			s.log.Warn("postcall: embed failed; saving without embedding", "err", err, "session", p.SessionID)
+		} else if len(vecs) == 1 {
+			vec = vecs[0]
 		}
 	}
-	postcallOutcomes.WithLabelValues(outcome).Inc()
-	s.log.Info("postcall: summary ready", "session", sess.id, "saved", saved, "ms", elapsed)
+	// Untagged calls save too (customer_id NULL, migration 0009) — taggable later.
+	sctx := tenancy.With(ctx, tenancy.TenantID(p.TenantID))
+	if err := s.pcStore.SaveSummary(sctx, p.CustomerName, p.SessionID, sum, vec, p.Stats); err != nil {
+		postcallOutcomes.WithLabelValues("save_error").Inc()
+		return fmt.Errorf("summary save: %w", err)
+	}
+	postcallOutcomes.WithLabelValues("summary").Inc()
+	s.log.Info("postcall: summary ready", "session", p.SessionID, "saved", true, "ms", elapsed)
+	return nil
 }
 
 func (s *Server) transcriptSink(conn *websocket.Conn, sess *session) stt.EventFunc {

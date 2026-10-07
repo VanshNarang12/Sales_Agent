@@ -43,6 +43,18 @@ questions, objections, and noise uniformly.
 - **Decision: extraction returns the ask or NONE.** Small talk / no-ask windows return
   NONE → nothing is searched, nothing shown. Failure degrades to "no card", never
   "wrong card" (with 5.4 citations + 5.5 confidence gate as the other two layers).
+- **REVISED 2026-10-06 — multi-ask, one line per ask (user decision).** A window can
+  hold several unanswered questions (rapid-fire asks before one click); the old
+  single-ask contract silently dropped all but one. `Extract` now returns
+  `[]string` — one short query per pending ask, newest first, capped at 3
+  (`maxAsks`) — or nil for NONE. Still ONE extraction LLM call. Downstream: one
+  embed call for all asks, one DB batch for all searches, one PARALLEL generate
+  per ask (parallel beats one combined call: output tokens stream sequentially
+  within a call — measured 1.4–1.9 s combined vs ~1.1 s slowest-of-two parallel).
+  Prompt also tuned on a real failing window (echoed duplicate lines from solo
+  testing + a KB meta-question): naming doc/people questions as valid asks and
+  calling out echo duplicates took qwen from 1/3 to 4/4 correct; small talk still
+  returns NONE 3/3.
 - **Decision: pattern stack for ALL model calls (product call 2026-08-29 — "one line
   to add any other model").** *Strategy:* callers depend only on `llm.Completer`.
   *Adapter:* one file per provider adapting its SDK to the interface. *Registry +
@@ -102,7 +114,8 @@ None — stateless call. No transcript text persisted by this component; prod lo
 not contain window/ask text (standards §7; dev console print is temporary).
 
 ## 7. APIs / events
-- **Inbound:** `Extract(ctx, detect.BuiltQuery) (ask string, err error)`.
+- **Inbound:** `Extract(ctx, detect.BuiltQuery) (asks []string, err error)` — up to
+  3 asks, newest first; nil = no ask (2026-10-06 multi-ask revision, §3).
 - **Outbound:** Anthropic Messages API (one call per click). Downstream consumer is
   Stage 5 search (pending); today the ask is logged.
 

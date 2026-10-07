@@ -34,15 +34,13 @@ type Stats struct {
 	Sources          []string
 }
 
-// SaveSummary finds-or-creates the customer (case-insensitive name match within
-// the org, so "Acme" and "acme" accumulate on one record) and inserts the
-// summary row — one transaction, all-or-nothing. embedding may be nil (embed
-// failure never blocks the save); the prep chat searches only embedded rows.
+// SaveSummary inserts the summary row; with a customer name it finds-or-creates
+// the customer (case-insensitive, so "Acme" and "acme" accumulate on one record),
+// with an empty name it saves untagged (customer_id NULL, migration 0009) for
+// later tagging via TagMeeting. One transaction, all-or-nothing. embedding may be
+// nil (embed failure never blocks the save); prep chat searches embedded rows only.
 func (s *Store) SaveSummary(ctx context.Context, customerName, sessionID string, sum *Summary, embedding []float32, stats Stats) error {
 	name := strings.TrimSpace(customerName)
-	if name == "" {
-		return fmt.Errorf("postcall save: empty customer name")
-	}
 	items, err := json.Marshal(sum.ActionItems)
 	if err != nil {
 		return fmt.Errorf("postcall save: %w", err)
@@ -59,15 +57,13 @@ func (s *Store) SaveSummary(ctx context.Context, customerName, sessionID string,
 		return fmt.Errorf("postcall save: %w", err)
 	}
 	err = db.WithTenantTx(ctx, s.pool, func(tx pgx.Tx) error {
-		// The no-op DO UPDATE keeps the first-typed casing and makes RETURNING
-		// yield the id on both the insert and the already-exists path.
-		var customerID string
-		if err := tx.QueryRow(ctx,
-			`INSERT INTO customers (org_id, name)
-			 VALUES (current_setting('app.tenant_id')::uuid, $1)
-			 ON CONFLICT (org_id, lower(name)) DO UPDATE SET name = customers.name
-			 RETURNING id`, name).Scan(&customerID); err != nil {
-			return err
+		var customerID *string // NULL when the call was untagged
+		if name != "" {
+			id, err := upsertCustomer(ctx, tx, name)
+			if err != nil {
+				return err
+			}
+			customerID = &id
 		}
 		var vec *string
 		if len(embedding) > 0 {
@@ -104,8 +100,52 @@ type Meeting struct {
 
 var ErrMeetingNotFound = errors.New("postcall: meeting not found")
 
-const meetingCols = `cs.id, c.name, COALESCE(cs.started_at, cs.created_at), cs.duration_seconds,
+// COALESCE + LEFT JOIN: untagged summaries (customer_id NULL) list with an empty
+// client name — the UI renders them as "No customer tagged".
+const meetingCols = `cs.id, COALESCE(c.name, ''), COALESCE(cs.started_at, cs.created_at), cs.duration_seconds,
        cs.summary, cs.action_items, cs.unanswered, cs.suggestions_count, cs.sources, cs.created_at`
+
+// upsertCustomer finds-or-creates a customer by name within the tenant. The no-op
+// DO UPDATE keeps the first-typed casing and makes RETURNING yield the id on both
+// the insert and the already-exists path.
+func upsertCustomer(ctx context.Context, tx pgx.Tx, name string) (string, error) {
+	var id string
+	err := tx.QueryRow(ctx,
+		`INSERT INTO customers (org_id, name)
+		 VALUES (current_setting('app.tenant_id')::uuid, $1)
+		 ON CONFLICT (org_id, lower(name)) DO UPDATE SET name = customers.name
+		 RETURNING id`, name).Scan(&id)
+	return id, err
+}
+
+// TagMeeting attaches an untagged (or re-tags a tagged) summary to a customer by
+// name — find-or-create, then point the row at them. From then on the summary
+// joins that customer's timeline and prep-chat context.
+func (s *Store) TagMeeting(ctx context.Context, meetingID, customerName string) error {
+	name := strings.TrimSpace(customerName)
+	if name == "" {
+		return fmt.Errorf("postcall tag: empty customer name")
+	}
+	err := db.WithTenantTx(ctx, s.pool, func(tx pgx.Tx) error {
+		customerID, err := upsertCustomer(ctx, tx, name)
+		if err != nil {
+			return err
+		}
+		res, err := tx.Exec(ctx,
+			`UPDATE call_summaries SET customer_id = $1 WHERE id = $2`, customerID, meetingID)
+		if err != nil {
+			return err
+		}
+		if res.RowsAffected() == 0 {
+			return ErrMeetingNotFound
+		}
+		return nil
+	})
+	if err != nil && !errors.Is(err, ErrMeetingNotFound) {
+		return fmt.Errorf("postcall tag: %w", err)
+	}
+	return err
+}
 
 // ListMeetings returns the org's summarized calls, newest first. The cursor is
 // "<created_at RFC3339Nano>|<id>" from the previous page's last row; empty means
@@ -129,7 +169,7 @@ func (s *Store) ListMeetings(ctx context.Context, limit int, cursor string) ([]M
 	err := db.WithTenantTx(ctx, s.pool, func(tx pgx.Tx) error {
 		rows, err := tx.Query(ctx, fmt.Sprintf(`
 			SELECT %s FROM call_summaries cs
-			JOIN customers c ON c.id = cs.customer_id
+			LEFT JOIN customers c ON c.id = cs.customer_id
 			%s
 			ORDER BY cs.created_at DESC, cs.id DESC
 			LIMIT $1`, meetingCols, where), args...)
@@ -166,7 +206,7 @@ func (s *Store) GetMeeting(ctx context.Context, id string) (Meeting, error) {
 	err := db.WithTenantTx(ctx, s.pool, func(tx pgx.Tx) error {
 		row := tx.QueryRow(ctx, fmt.Sprintf(`
 			SELECT %s FROM call_summaries cs
-			JOIN customers c ON c.id = cs.customer_id
+			LEFT JOIN customers c ON c.id = cs.customer_id
 			WHERE cs.id = $1`, meetingCols), id)
 		var err error
 		m, _, err = scanMeeting(row)

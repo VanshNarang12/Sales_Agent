@@ -27,12 +27,12 @@ func query(text string) detect.BuiltQuery {
 
 func TestExtractReturnsAsk(t *testing.T) {
 	fc := &fakeCompleter{out: "  prospect asks whether the product supports SAML SSO  "}
-	ask, err := NewExtractor(fc).Extract(context.Background(), query("prospect: do you support single sign-on"))
+	asks, err := NewExtractor(fc).Extract(context.Background(), query("prospect: do you support single sign-on"))
 	if err != nil {
 		t.Fatalf("extract: %v", err)
 	}
-	if ask != "prospect asks whether the product supports SAML SSO" {
-		t.Errorf("ask = %q, want trimmed model output", ask)
+	if len(asks) != 1 || asks[0] != "prospect asks whether the product supports SAML SSO" {
+		t.Errorf("asks = %q, want one trimmed model output", asks)
 	}
 	if !strings.Contains(fc.lastUser, "single sign-on") {
 		t.Errorf("window not passed to model: %q", fc.lastUser)
@@ -42,12 +42,32 @@ func TestExtractReturnsAsk(t *testing.T) {
 	}
 }
 
+func TestExtractMultipleAsks(t *testing.T) {
+	fc := &fakeCompleter{out: "prospect asks about pricing plans\n\nprospect asks about Salesforce integration\n"}
+	asks, err := NewExtractor(fc).Extract(context.Background(), query("prospect: pricing? and salesforce?"))
+	if err != nil {
+		t.Fatalf("extract: %v", err)
+	}
+	want := []string{"prospect asks about pricing plans", "prospect asks about Salesforce integration"}
+	if len(asks) != 2 || asks[0] != want[0] || asks[1] != want[1] {
+		t.Errorf("asks = %q, want %q", asks, want)
+	}
+}
+
+func TestExtractCapsAsks(t *testing.T) {
+	fc := &fakeCompleter{out: "a\nb\nc\nd\ne"}
+	asks, err := NewExtractor(fc).Extract(context.Background(), query("many questions"))
+	if err != nil || len(asks) != maxAsks {
+		t.Errorf("want %d asks, got %q (err %v)", maxAsks, asks, err)
+	}
+}
+
 func TestExtractNoneMeansNoAsk(t *testing.T) {
 	for _, out := range []string{"NONE", "none", " None "} {
 		fc := &fakeCompleter{out: out}
-		ask, err := NewExtractor(fc).Extract(context.Background(), query("rep: how was your weekend"))
-		if err != nil || ask != "" {
-			t.Errorf("out %q: want (\"\", nil), got (%q, %v)", out, ask, err)
+		asks, err := NewExtractor(fc).Extract(context.Background(), query("rep: how was your weekend"))
+		if err != nil || len(asks) != 0 {
+			t.Errorf("out %q: want no asks, got (%q, %v)", out, asks, err)
 		}
 	}
 }

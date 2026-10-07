@@ -21,6 +21,9 @@ type Config struct {
 	APIKey    string
 	BaseURL   string // optional endpoint override (self-hosted / OpenAI-compatible vendors)
 	MaxTokens int64
+	// ReasoningEffort caps a reasoning model's thinking ("low"|"medium"|"high",
+	// OpenAI-compatible vendors only). Empty = provider default.
+	ReasoningEffort string
 }
 
 // Factory builds a provider's Completer from config.

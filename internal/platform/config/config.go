@@ -98,6 +98,9 @@ type Config struct {
 	LLMAnswerModel     string
 	LLMAnswerBaseURL   string
 	LLMAnswerMaxTokens int
+	// LLMAnswerReasoningEffort caps the answer model's thinking (latency lever;
+	// "low"|"medium"|"high", empty = provider default).
+	LLMAnswerReasoningEffort string
 	// SuggestMinConfidence gates cards: below it the card is dropped, hits still sent (18.9).
 	SuggestMinConfidence float64
 
@@ -147,8 +150,8 @@ func Load(serviceName string) (*Config, error) {
 		GoogleClientIDs: splitCSV(os.Getenv("GOOGLE_CLIENT_IDS")),
 
 		CORSAllowedOrigins: splitCSV(getenv("CORS_ALLOWED_ORIGINS", "http://localhost:5173")),
-		AuthDisabled:   os.Getenv("AUTH_DISABLED") == "true",
-		DevTenantID:    getenv("DEV_TENANT_ID", "00000000-0000-0000-0000-000000000001"),
+		AuthDisabled:       os.Getenv("AUTH_DISABLED") == "true",
+		DevTenantID:        getenv("DEV_TENANT_ID", "00000000-0000-0000-0000-000000000001"),
 
 		STTProvider:      getenv("STT_PROVIDER", "deepgram"),
 		STTModel:         getenv("STT_MODEL", "nova-3"),
@@ -174,11 +177,12 @@ func Load(serviceName string) (*Config, error) {
 		RetrievalTopK:     getenvInt("RETRIEVAL_TOP_K", 5),
 		RetrievalMinScore: getenvFloat("RETRIEVAL_MIN_SCORE", 0.5),
 
-		LLMAnswerProvider:    getenv("LLM_ANSWER_PROVIDER", "openai_compatible"),
-		LLMAnswerModel:       getenv("LLM_ANSWER_MODEL", "openai/gpt-oss-120b"),
-		LLMAnswerBaseURL:     getenv("LLM_ANSWER_BASE_URL", "https://api.groq.com/openai/v1"),
-		LLMAnswerMaxTokens:   getenvInt("LLM_ANSWER_MAX_TOKENS", 2000),
-		SuggestMinConfidence: getenvFloat("SUGGEST_MIN_CONFIDENCE", 0.5),
+		LLMAnswerProvider:        getenv("LLM_ANSWER_PROVIDER", "openai_compatible"),
+		LLMAnswerModel:           getenv("LLM_ANSWER_MODEL", "openai/gpt-oss-120b"),
+		LLMAnswerBaseURL:         getenv("LLM_ANSWER_BASE_URL", "https://api.groq.com/openai/v1"),
+		LLMAnswerMaxTokens:       getenvInt("LLM_ANSWER_MAX_TOKENS", 2000),
+		LLMAnswerReasoningEffort: getenv("LLM_ANSWER_REASONING_EFFORT", ""),
+		SuggestMinConfidence:     getenvFloat("SUGGEST_MIN_CONFIDENCE", 0.5),
 
 		LLMSummaryProvider:  getenv("LLM_SUMMARY_PROVIDER", "openai_compatible"),
 		LLMSummaryModel:     getenv("LLM_SUMMARY_MODEL", "openai/gpt-oss-120b"),

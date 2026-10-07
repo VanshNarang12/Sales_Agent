@@ -201,11 +201,11 @@ chat and plan the pitch with full history + company docs as context.
 ## Stage 11 — Admin & Playbook Authoring (content control)
 *Why now: pilots need a way to create/govern the guidance.*
 
-- [ ] **11.1** Admin playbook builder — `12.1`
+- [x] **11.1** Admin playbook builder — `12.1` (2026-10-03: org guidance text, prompt-injected into every card; Playbook page in the web app; admin-only writes — first use of the role column)
 - [ ] ~~**11.2** Objection → response mapping editor — `12.2`~~ *(dropped 2026-08-30 — no structured entries; objection answers live in uploaded docs)*
 - [ ] ~~**11.3** Battlecard editor (per competitor) — `12.3`~~ *(dropped 2026-08-30 — no battlecard entity)*
-- [ ] **11.4** "Do-not-say" rules editor — `12.4`
-- [ ] **11.5** "Do-not-say" guardrail on generated cards (rule match before the WS send) — `6.5` / `8.3` / `3.6` *(moved here from Stage 9 on 2026-09-14 — build together with 11.4)*
+- [x] **11.4** "Do-not-say" rules editor — `12.4` (2026-10-03: rules list on the Playbook page — phrase + reason, admin-only)
+- [x] **11.5** "Do-not-say" guardrail on generated cards — `6.5` / `8.3` / `3.6` (2026-10-03: **prompt-only enforcement, user decision** — rules + guidance ride the card LLM's system prompt; no post-generation matching. Revisit with Stage-13 evals if slips appear; admin_playbook_techdoc.md §3)
 
 **Expectation:** a sales leader can author and control exactly what reps see live.
 

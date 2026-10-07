@@ -228,6 +228,31 @@ row written; nothing else affected.
 - The summary prompt was hand-tuned by Vansh (VP persona); revisit wording after
   the first real outputs.
 
+## 13b. Plan 2026-09-29 — retries, untagged summaries, queue (user decisions)
+- **Summary LLM call retries:** up to 3 attempts (waits 2 s then 5 s) inside the
+  existing 60 s post-call budget. Transport/LLM errors only.
+- **Untagged summaries are no longer thrown away:** migration 0009 makes
+  `call_summaries.customer_id` nullable; a call with no typed customer name saves
+  with NULL customer. The meetings list shows it as "No customer tagged"; a new
+  `PATCH /v1/meetings/{id}/customer {name}` find-or-creates the customer and
+  attaches the summary — only then does it join that customer's timeline and
+  prep-chat context (deliberate incentive to tag).
+- **Durable post-call queue (built 2026-10-02):** Postgres-as-queue — a `jobs`
+  table claimed with `FOR UPDATE SKIP LOCKED` (migration 0010), worked by a
+  goroutine in the gateway (`internal/jobs`). Call end = one INSERT (metadata
+  only — session id, customer, stats; NEVER the transcript, which stays in Redis
+  so the expiry promise holds) + an in-process nudge channel; a 2 s ticker is the
+  backstop for retries, restarts, and other instances; a janitor resets `running`
+  rows older than 5 min (crashed worker). Retries: 5 attempts, `run_at = now +
+  30s × attempt`, `last_error` kept; terminal `failed` rows stay queryable.
+  Enqueue failure falls back to inline processing (never worse than before).
+  *Rejected:* BullMQ (Node-only), RabbitMQ/NATS JetStream (new broker for one
+  job kind at calls/day volume), Redis queue (durability tied to Redis
+  persistence; the transcript's 30-min TTL already bounds recoverability), River
+  (fine, but a dependency for ~150 lines — revisit when job kinds multiply).
+  Known accepted gap: crash after save but before marking done ⇒ a duplicate
+  summary row (visible, deletable; idempotency key on session_id if it bites).
+
 ## 14. Changelog
 
 - `2026-09-14` — **Built and wired.** `internal/postcall` (Summarizer + Store,

@@ -4,9 +4,11 @@ package gateway
 // dashboard tiles). Data = call_summaries + per-call stats (migration 0007).
 
 import (
+	"encoding/json"
 	"errors"
 	"net/http"
 	"strconv"
+	"strings"
 	"github.com/google/uuid"
 	"github.com/VanshNarang12/sales-agent/internal/postcall"
 )
@@ -45,6 +47,44 @@ func (s *Server) handleMeetingList(w http.ResponseWriter, r *http.Request) {
 		resp["next_cursor"] = next
 	}
 	writeJSON(w, http.StatusOK, resp)
+}
+
+// handleMeetingTag serves PATCH /v1/meetings/{id}/customer — attach an untagged
+// summary to a customer by name (find-or-create). Returns the updated meeting.
+func (s *Server) handleMeetingTag(w http.ResponseWriter, r *http.Request) {
+	if s.pcStore == nil {
+		http.Error(w, "meetings unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	id := r.PathValue("id")
+	if _, err := uuid.Parse(id); err != nil {
+		http.Error(w, "meeting not found", http.StatusNotFound)
+		return
+	}
+	var in struct {
+		Name string `json:"name"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil || strings.TrimSpace(in.Name) == "" {
+		http.Error(w, `"name" is required`, http.StatusBadRequest)
+		return
+	}
+	err := s.pcStore.TagMeeting(r.Context(), id, in.Name)
+	if errors.Is(err, postcall.ErrMeetingNotFound) {
+		http.Error(w, "meeting not found", http.StatusNotFound)
+		return
+	}
+	if err != nil {
+		s.log.Warn("meeting tag failed", "err", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	m, err := s.pcStore.GetMeeting(r.Context(), id)
+	if err != nil {
+		s.log.Warn("meeting reload after tag failed", "err", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, http.StatusOK, m)
 }
 
 // handleMeetingGet serves GET /v1/meetings/{id} — one call in full.

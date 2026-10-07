@@ -18,12 +18,14 @@ import (
 	"github.com/VanshNarang12/sales-agent/internal/embed"
 	"github.com/VanshNarang12/sales-agent/internal/gateway"
 	"github.com/VanshNarang12/sales-agent/internal/identity"
+	"github.com/VanshNarang12/sales-agent/internal/jobs"
 	"github.com/VanshNarang12/sales-agent/internal/kb"
 	"github.com/VanshNarang12/sales-agent/internal/llm"
 	"github.com/VanshNarang12/sales-agent/internal/platform/config"
 	"github.com/VanshNarang12/sales-agent/internal/platform/db"
 	"github.com/VanshNarang12/sales-agent/internal/platform/secrets"
 	"github.com/VanshNarang12/sales-agent/internal/platform/telemetry"
+	"github.com/VanshNarang12/sales-agent/internal/playbook"
 	"github.com/VanshNarang12/sales-agent/internal/postcall"
 	"github.com/VanshNarang12/sales-agent/internal/retrieval"
 	"github.com/VanshNarang12/sales-agent/internal/stt"
@@ -97,9 +99,48 @@ func run(log *slog.Logger) error {
 	chat := buildChat(ctx, cfg, custStore, searcher, embedder, log)
 	idsvc := buildIdentity(ctx, cfg, pool, signingKey, log)
 
+	// Durable post-call queue (migration 0010): call-end work survives restarts.
+	// No DB ⇒ nil ⇒ the gateway falls back to inline post-call processing.
+	var jobq *jobs.Queue
+	if pool != nil {
+		jobq = jobs.NewQueue(pool, log)
+	} else {
+		log.Warn("job queue disabled: no database — post-call runs inline")
+	}
+
+	// Playbook cache lives in shared Redis (user decision 2026-10-06) so one
+	// admin write refreshes what every gateway instance serves. No Redis ⇒ nil
+	// cache ⇒ every Suggest pays the DB read — correct, just slower.
+	var pbStore *playbook.Store
+	if pool != nil {
+		var pbCache playbook.Cache
+		if opts, err := redis.ParseURL(cfg.RedisURL); err == nil {
+			rdb := redis.NewClient(opts)
+			pingCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+			if err := rdb.Ping(pingCtx).Err(); err == nil {
+				pbCache = playbook.RedisCache{R: rdb}
+			} else {
+				log.Warn("playbook cache disabled: redis unreachable", "err", err)
+			}
+			cancel()
+		}
+		pbStore = playbook.NewStore(pool, pbCache)
+	}
+
+	gw := gateway.New(cfg, signingKey, sttMgr, detectEng, extractor, searcher, generator, ingester, docLister(kbStore), tstore, summarizer, pcStore, embedder, custStore, chat, idsvc, jobq, pbStore, log)
+
+	// The queue worker: instant pickup via the enqueue nudge; a 5-minute ticker
+	// (user decision 2026-10-02) retries failures and adopts crash leftovers.
+	if jobq != nil {
+		worker := jobs.NewWorker(jobq)
+		worker.Register("postcall_summary", gw.ProcessPostcallJob)
+		go worker.Run(ctx)
+		log.Info("job worker started", "tick", "5m")
+	}
+
 	srv := &http.Server{
 		Addr:              cfg.HTTPAddr,
-		Handler:           gateway.New(cfg, signingKey, sttMgr, detectEng, extractor, searcher, generator, ingester, docLister(kbStore), tstore, summarizer, pcStore, embedder, custStore, chat, idsvc, log).Handler(),
+		Handler:           gw.Handler(),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
@@ -377,11 +418,12 @@ func buildSuggest(ctx context.Context, cfg *config.Config, log *slog.Logger) *su
 		}
 	}
 	model, err := llm.New(llm.Config{
-		Provider:  cfg.LLMAnswerProvider,
-		Model:     cfg.LLMAnswerModel,
-		APIKey:    apiKey,
-		BaseURL:   cfg.LLMAnswerBaseURL,
-		MaxTokens: int64(cfg.LLMAnswerMaxTokens),
+		Provider:        cfg.LLMAnswerProvider,
+		Model:           cfg.LLMAnswerModel,
+		APIKey:          apiKey,
+		BaseURL:         cfg.LLMAnswerBaseURL,
+		MaxTokens:       int64(cfg.LLMAnswerMaxTokens),
+		ReasoningEffort: cfg.LLMAnswerReasoningEffort,
 	})
 	if err != nil {
 		log.Warn("card generation disabled; Suggest will send raw hits only", "err", err)

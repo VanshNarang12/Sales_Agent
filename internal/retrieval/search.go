@@ -54,11 +54,68 @@ func (s *Searcher) Search(ctx context.Context, ask string) ([]SearchResult, erro
 	if strings.TrimSpace(ask) == "" {
 		return nil, nil
 	}
-	vecs, err := s.embedder.Embed(ctx, embed.PrefixQuery, []string{ask})
+	all, err := s.SearchMulti(ctx, []string{ask})
+	if err != nil {
+		return nil, err
+	}
+	return all[0], nil
+}
+
+// SearchMulti answers several asks at the wire cost of one (multi-card Suggest,
+// 2026-10-06): one embedding call for all asks, then every vector search queued
+// in a single db.WithTenantBatch round trip. Result i belongs to asks[i].
+func (s *Searcher) SearchMulti(ctx context.Context, asks []string) ([][]SearchResult, error) {
+	if len(asks) == 0 {
+		return nil, nil
+	}
+	vecs, err := s.embedder.Embed(ctx, embed.PrefixQuery, asks)
 	if err != nil {
 		return nil, fmt.Errorf("search embed: %w", err)
 	}
-	return s.SearchVec(ctx, vecs[0], s.topK)
+	if len(vecs) != len(asks) {
+		return nil, fmt.Errorf("search embed: %d vectors for %d asks", len(vecs), len(asks))
+	}
+	results := make([][]SearchResult, len(asks))
+	err = db.WithTenantBatch(ctx, s.pool,
+		func(b *pgx.Batch) {
+			for _, v := range vecs {
+				b.Queue(searchSQL, vectorLiteral(v), s.topK)
+			}
+		},
+		func(br pgx.BatchResults) error {
+			for i := range vecs {
+				hits, err := scanHits(br, s.minScore)
+				if err != nil {
+					return err
+				}
+				results[i] = hits
+			}
+			return nil
+		})
+	if err != nil {
+		return nil, fmt.Errorf("search query: %w", err)
+	}
+	return results, nil
+}
+
+// scanHits reads one queued search's rows off the batch, applying the score gate.
+func scanHits(br pgx.BatchResults, minScore float64) ([]SearchResult, error) {
+	rows, err := br.Query()
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var hits []SearchResult
+	for rows.Next() {
+		var r SearchResult
+		if err := rows.Scan(&r.DocumentID, &r.Title, &r.Heading, &r.Text, &r.Score); err != nil {
+			return nil, err
+		}
+		if r.Score >= minScore {
+			hits = append(hits, r)
+		}
+	}
+	return hits, rows.Err()
 }
 
 // SearchVec searches with an already-embedded query — for callers (prep chat)
@@ -67,24 +124,16 @@ func (s *Searcher) SearchVec(ctx context.Context, vec []float32, topK int) ([]Se
 	if topK <= 0 {
 		topK = s.topK
 	}
+	// Batched (one round trip): the Suggest hot path pays ~270 ms × 5 for a plain
+	// tenant tx against a remote DB. RLS scoping is unchanged (db.WithTenantBatch).
 	var hits []SearchResult
-	err := db.WithTenantTx(ctx, s.pool, func(tx pgx.Tx) error {
-		rows, err := tx.Query(ctx, searchSQL, vectorLiteral(vec), topK)
-		if err != nil {
+	err := db.WithTenantBatch(ctx, s.pool,
+		func(b *pgx.Batch) { b.Queue(searchSQL, vectorLiteral(vec), topK) },
+		func(br pgx.BatchResults) error {
+			var err error
+			hits, err = scanHits(br, s.minScore)
 			return err
-		}
-		defer rows.Close()
-		for rows.Next() {
-			var r SearchResult
-			if err := rows.Scan(&r.DocumentID, &r.Title, &r.Heading, &r.Text, &r.Score); err != nil {
-				return err
-			}
-			if r.Score >= s.minScore {
-				hits = append(hits, r)
-			}
-		}
-		return rows.Err()
-	})
+		})
 	if err != nil {
 		return nil, fmt.Errorf("search query: %w", err)
 	}
